@@ -1,0 +1,196 @@
+{% extends "base.html" %}
+{% block title %}Administration Dashboard | {{ university_name }}{% endblock %}
+{% block content %}
+<section class="panel">
+    <h2>Faculty Administration Dashboard</h2>
+    <p>Faculty monitors requests, updates issue progress, and maintains accountability with a real-time audit trail.</p>
+</section>
+
+<section class="panel">
+    <h3>Permission Queue</h3>
+    <form method="get" class="grid-2">
+        <div>
+            <label for="perm_status">Status</label>
+            <select id="perm_status" name="perm_status">
+                <option value="all" {% if filters.perm_status == 'all' %}selected{% endif %}>All</option>
+                <option value="pending" {% if filters.perm_status == 'pending' %}selected{% endif %}>Pending</option>
+                <option value="approved" {% if filters.perm_status == 'approved' %}selected{% endif %}>Approved</option>
+                <option value="rejected" {% if filters.perm_status == 'rejected' %}selected{% endif %}>Rejected</option>
+            </select>
+        </div>
+        <div>
+            <label for="perm_type">Type</label>
+            <select id="perm_type" name="perm_type">
+                <option value="all" {% if filters.perm_type == 'all' %}selected{% endif %}>All</option>
+                <option value="late_outing" {% if filters.perm_type == 'late_outing' %}selected{% endif %}>Late-Night Outing</option>
+                <option value="leave_pass" {% if filters.perm_type == 'leave_pass' %}selected{% endif %}>Leave Pass</option>
+                <option value="early_departure" {% if filters.perm_type == 'early_departure' %}selected{% endif %}>Early Departure</option>
+                <option value="commute_pass" {% if filters.perm_type == 'commute_pass' %}selected{% endif %}>Commute Pass</option>
+            </select>
+        </div>
+        <div>
+            <label for="perm_student_id">Student ID</label>
+            <input id="perm_student_id" name="perm_student_id" type="text" value="{{ filters.perm_student_id }}" placeholder="Numeric student id">
+        </div>
+        <div>
+            <label for="permission_search">Search Request</label>
+            <input id="permission_search" name="permission_search" type="text" value="{{ filters.permission_search }}" placeholder="Destination or reason">
+        </div>
+        <div>
+            <button class="btn" type="submit">Apply Filters</button>
+            <a class="btn btn-muted" href="{{ url_for('dashboard') }}">Reset</a>
+        </div>
+    </form>
+    <table>
+        <thead>
+            <tr>
+                <th>Student ID</th>
+                <th>Student Name</th>
+                <th>Type</th>
+                <th>Destination</th>
+                <th>Reason</th>
+                <th>Timeline</th>
+                <th>Status</th>
+                <th>Decision</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for p, student_name in permissions %}
+            <tr>
+                <td>{{ p.student_id }}</td>
+                <td>{{ student_name }}</td>
+                <td>{{ p.permission_type.replace('_', ' ')|title }}</td>
+                <td>{{ p.destination }}</td>
+                <td>{{ p.reason }}</td>
+                <td>{{ p.requested_from.strftime('%d %b %Y %I:%M %p') }} - {{ p.requested_to.strftime('%d %b %Y %I:%M %p') }}</td>
+                <td><span class="status-pill status-{{ p.status }}">{{ p.status }}</span></td>
+                <td>
+                    {% if p.status == 'pending' %}
+                    <form method="post" action="{{ url_for('decide_permission', request_id=p.id) }}">
+                        <input type="text" name="decision_note" placeholder="Decision note (optional)">
+                        <button class="btn" type="submit" name="decision" value="approved">Approve</button>
+                        <button class="btn btn-danger" type="submit" name="decision" value="rejected">Reject</button>
+                    </form>
+                    {% else %}
+                    {{ p.decision_note or '-' }}
+                    {% endif %}
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="7">No permission requests.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+
+<section class="panel">
+    <h3>Issue Monitoring</h3>
+    <form method="get" class="grid-2">
+        <input type="hidden" name="perm_status" value="{{ filters.perm_status }}">
+        <input type="hidden" name="perm_type" value="{{ filters.perm_type }}">
+        <input type="hidden" name="perm_student_id" value="{{ filters.perm_student_id }}">
+        <input type="hidden" name="permission_search" value="{{ filters.permission_search }}">
+        <div>
+            <label for="issue_status">Issue Status</label>
+            <select id="issue_status" name="issue_status">
+                <option value="all" {% if filters.issue_status == 'all' %}selected{% endif %}>All</option>
+                <option value="open" {% if filters.issue_status == 'open' %}selected{% endif %}>Open</option>
+                <option value="in_progress" {% if filters.issue_status == 'in_progress' %}selected{% endif %}>In Progress</option>
+                <option value="resolved" {% if filters.issue_status == 'resolved' %}selected{% endif %}>Resolved</option>
+            </select>
+        </div>
+        <div>
+            <label for="issue_severity">Severity</label>
+            <select id="issue_severity" name="issue_severity">
+                <option value="all" {% if filters.issue_severity == 'all' %}selected{% endif %}>All</option>
+                <option value="low" {% if filters.issue_severity == 'low' %}selected{% endif %}>Low</option>
+                <option value="medium" {% if filters.issue_severity == 'medium' %}selected{% endif %}>Medium</option>
+                <option value="high" {% if filters.issue_severity == 'high' %}selected{% endif %}>High</option>
+            </select>
+        </div>
+        <div>
+            <label for="issue_student_id">Student ID</label>
+            <input id="issue_student_id" name="issue_student_id" type="text" value="{{ filters.issue_student_id }}" placeholder="Numeric student id">
+        </div>
+        <div>
+            <label for="issue_search">Search Issue</label>
+            <input id="issue_search" name="issue_search" type="text" value="{{ filters.issue_search }}" placeholder="Location or details">
+        </div>
+        <div>
+            <button class="btn" type="submit">Apply Filters</button>
+            <a class="btn btn-muted" href="{{ url_for('dashboard') }}">Reset</a>
+        </div>
+    </form>
+    <table>
+        <thead>
+            <tr>
+                <th>Student ID</th>
+                <th>Student Name</th>
+                <th>Category</th>
+                <th>Location</th>
+                <th>Severity</th>
+                <th>Status</th>
+                <th>Update</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for issue, student_name in issues %}
+            <tr>
+                <td>{{ issue.student_id }}</td>
+                <td>{{ student_name }}</td>
+                <td>{{ issue.category|title }}</td>
+                <td>{{ issue.location }}</td>
+                <td>{{ issue.severity|title }}</td>
+                <td><span class="status-pill status-{{ issue.status }}">{{ issue.status }}</span></td>
+                <td>
+                    <form method="post" action="{{ url_for('update_issue', issue_id=issue.id) }}">
+                        <select name="status" required>
+                            <option value="open" {% if issue.status == 'open' %}selected{% endif %}>Open</option>
+                            <option value="in_progress" {% if issue.status == 'in_progress' %}selected{% endif %}>In Progress</option>
+                            <option value="resolved" {% if issue.status == 'resolved' %}selected{% endif %}>Resolved</option>
+                        </select>
+                        <button class="btn btn-muted" type="submit">Update</button>
+                    </form>
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="7">No issues reported.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+
+<section class="panel">
+    <h3>Audit Trail (Latest 30 Events)</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>Actor</th>
+                <th>Action</th>
+                <th>Target</th>
+                <th>Details</th>
+                <th>Timestamp</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for log in logs %}
+            <tr>
+                <td>{{ log.actor_id }}</td>
+                <td>{{ log.action }}</td>
+                <td>{{ log.target_type }} #{{ log.target_id }}</td>
+                <td>{{ log.details or '-' }}</td>
+                <td>{{ log.timestamp.strftime('%d %b %Y %I:%M %p') }}</td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="5">No audit events yet.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endblock %}

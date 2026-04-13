@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Student Registration | {{ university_name }}{% endblock %}
+{% block content %}
+<section class="panel" style="max-width: 720px; margin: 0 auto;">
+    <h2>Student / Day Scholar Registration</h2>
+    <form method="post">
+        <div class="grid-2">
+            <div>
+                <label for="full_name">Full Name</label>
+                <input id="full_name" name="full_name" type="text" required>
+            </div>
+            <div>
+                <label for="login_id">Roll Number</label>
+                <input id="login_id" name="login_id" type="text" required>
+            </div>
+        </div>
+
+        <div class="grid-2">
+            <div>
+                <label for="email">College Email</label>
+                <input id="email" name="email" type="email" required>
+            </div>
+            <div>
+                <label for="phone">Phone Number</label>
+                <input id="phone" name="phone" type="text" required>
+            </div>
+        </div>
+
+        <div class="grid-2">
+            <div>
+                <label for="role">User Type</label>
+                <select id="role" name="role" required>
+                    <option value="student">Hosteller Student</option>
+                    <option value="day_scholar">Day Scholar</option>
+                </select>
+            </div>
+            <div>
+                <label for="parent_login_id">Parent Login ID (optional)</label>
+                <input id="parent_login_id" name="parent_login_id" type="text" placeholder="e.g. PARENT1001">
+            </div>
+        </div>
+
+        <label for="parent_phone">Parent WhatsApp Number (required if Parent Login ID is filled)</label>
+        <input id="parent_phone" name="parent_phone" type="text" placeholder="e.g. 9390911031">
+
+        <label for="password">Create Password</label>
+        <input id="password" name="password" type="password" minlength="8" required>
+
+        <button class="btn" type="submit">Create Account</button>
+    </form>
+</section>
+{% endblock %}

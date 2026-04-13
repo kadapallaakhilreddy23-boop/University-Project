@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Sign In | {{ university_name }}{% endblock %}
+{% block content %}
+<section class="panel" style="max-width: 540px; margin: 0 auto;">
+    <h2>Secure Login</h2>
+    <p>Sign in using your official Roll Number / Staff ID / Parent ID.</p>
+    <form method="post">
+        <label for="login_id">Login ID</label>
+        <input id="login_id" name="login_id" type="text" required>
+
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" required>
+
+        <button class="btn" type="submit">Sign In</button>
+    </form>
+    <p>New student/day scholar? <a href="{{ url_for('register_student') }}">Register here</a>.</p>
+</section>
+{% endblock %}

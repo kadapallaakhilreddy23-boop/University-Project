@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}{{ university_name }} | Official Portal{% endblock %}
+{% block content %}
+<section class="hero hero-home">
+    <div class="hero-image">
+        <div class="hero-content">
+            <div class="hero-badge">Official Portal</div>
+            <h2>Hostel & Day Scholar Management System</h2>
+            <p class="hero-subtitle">
+                One secure platform for permission requests, issue reporting, faculty approvals, and parent updates — with full
+                accountability and audit trails.
+            </p>
+            <div class="hero-actions">
+                <a class="btn" href="{{ url_for('login') }}">Access Dashboard</a>
+                <a class="btn btn-muted" href="{{ url_for('register_student') }}">Student Registration</a>
+            </div>
+            <div class="hero-kpis">
+                <div class="kpi">
+                    <div class="kpi-label">Role-based access</div>
+                    <div class="kpi-value">Students • Faculty • Parents</div>
+                </div>
+                <div class="kpi">
+                    <div class="kpi-label">Fast workflows</div>
+                    <div class="kpi-value">Requests, approvals, tracking</div>
+                </div>
+                <div class="kpi">
+                    <div class="kpi-label">Accountability</div>
+                    <div class="kpi-value">Audit log + notifications</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="quote">
+    “Discipline builds character, unity builds strength, and education builds a nation.”
+</section>
+
+<section class="panel panel-tight">
+    <div class="home-split">
+        <div>
+            <h2>Welcome to {{ university_name }}</h2>
+            <p class="muted">
+                This portal maintains official records for hostel and day scholar administration. Submit requests, track decisions,
+                and keep guardians informed — all in a single verified system.
+            </p>
+            <div class="feature-grid">
+                <div class="feature-card">
+                    <h3>Students</h3>
+                    <p>Submit permission requests, report campus issues, and track approvals in real time.</p>
+                </div>
+                <div class="feature-card">
+                    <h3>Faculty & Admin</h3>
+                    <p>Review queues, approve/reject decisions, update issue progress, and maintain an audit trail.</p>
+                </div>
+                <div class="feature-card">
+                    <h3>Parents</h3>
+                    <p>View ward updates, see permission outcomes, and receive official notifications.</p>
+                </div>
+            </div>
+        </div>
+        <div class="home-callout">
+            <h3>Quick Start</h3>
+            <ol class="steps">
+                <li>Register as a Student / Day Scholar</li>
+                <li>Sign in with your Roll Number / Staff ID / Parent ID</li>
+                <li>Open the dashboard to submit or review requests</li>
+            </ol>
+            <div class="callout-actions">
+                <a class="btn" href="{{ url_for('login') }}">Sign In</a>
+                <a class="btn btn-muted" href="{{ url_for('register_student') }}">Create Student Account</a>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="panel">
+    <div class="grid-2">
+        <div>
+            <h3>Mission</h3>
+            <p>To provide secure, reliable, and student-centered residential and commute governance for every learner.</p>
+        </div>
+        <div>
+            <h3>Vision</h3>
+            <p>To be a trusted institutional community where safety, responsibility, and academic focus are upheld daily.</p>
+        </div>
+    </div>
+</section>
+{% endblock %}

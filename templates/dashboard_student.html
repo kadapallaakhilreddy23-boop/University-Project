@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block title %}Student Dashboard | {{ university_name }}{% endblock %}
+{% block content %}
+<section class="panel">
+    <h2>Student / Day Scholar Dashboard</h2>
+    <p>
+        Manage your permissions, track approvals, and submit campus issues in one official workspace.
+    </p>
+    <p>
+        <a class="btn" href="{{ url_for('request_permission') }}">New Permission Request</a>
+        <a class="btn btn-muted" href="{{ url_for('report_issue') }}">Report New Issue</a>
+    </p>
+</section>
+
+<section class="panel">
+    <h3>My Permission Requests</h3>
+    <form method="get" class="grid-2">
+        <div>
+            <label for="perm_status">Status</label>
+            <select id="perm_status" name="perm_status">
+                <option value="all" {% if filters.perm_status == 'all' %}selected{% endif %}>All</option>
+                <option value="pending" {% if filters.perm_status == 'pending' %}selected{% endif %}>Pending</option>
+                <option value="approved" {% if filters.perm_status == 'approved' %}selected{% endif %}>Approved</option>
+                <option value="rejected" {% if filters.perm_status == 'rejected' %}selected{% endif %}>Rejected</option>
+            </select>
+        </div>
+        <div>
+            <label for="perm_type">Type</label>
+            <select id="perm_type" name="perm_type">
+                <option value="all" {% if filters.perm_type == 'all' %}selected{% endif %}>All</option>
+                <option value="late_outing" {% if filters.perm_type == 'late_outing' %}selected{% endif %}>Late-Night Outing</option>
+                <option value="leave_pass" {% if filters.perm_type == 'leave_pass' %}selected{% endif %}>Leave Pass</option>
+                <option value="early_departure" {% if filters.perm_type == 'early_departure' %}selected{% endif %}>Early Departure</option>
+                <option value="commute_pass" {% if filters.perm_type == 'commute_pass' %}selected{% endif %}>Commute Pass</option>
+            </select>
+        </div>
+        <div>
+            <label for="permission_search">Search Request</label>
+            <input id="permission_search" name="permission_search" type="text" value="{{ filters.permission_search }}" placeholder="Destination or reason">
+        </div>
+        <div style="align-self: end;">
+            <button class="btn" type="submit">Apply Filters</button>
+            <a class="btn btn-muted" href="{{ url_for('dashboard') }}">Reset</a>
+        </div>
+    </form>
+    <table>
+        <thead>
+            <tr>
+                <th>Type</th>
+                <th>Destination</th>
+                <th>Window</th>
+                <th>Status</th>
+                <th>Note</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for p in permissions %}
+            <tr>
+                <td>{{ p.permission_type.replace('_', ' ')|title }}</td>
+                <td>{{ p.destination }}</td>
+                <td>{{ p.requested_from.strftime('%d %b %Y %I:%M %p') }} - {{ p.requested_to.strftime('%d %b %Y %I:%M %p') }}</td>
+                <td><span class="status-pill status-{{ p.status }}">{{ p.status }}</span></td>
+                <td>{{ p.decision_note or '-' }}</td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="5">No requests found.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+
+<section class="panel">
+    <h3>My Issue Reports</h3>
+    <form method="get" class="grid-2">
+        <input type="hidden" name="perm_status" value="{{ filters.perm_status }}">
+        <input type="hidden" name="perm_type" value="{{ filters.perm_type }}">
+        <input type="hidden" name="permission_search" value="{{ filters.permission_search }}">
+        <div>
+            <label for="issue_status">Issue Status</label>
+            <select id="issue_status" name="issue_status">
+                <option value="all" {% if filters.issue_status == 'all' %}selected{% endif %}>All</option>
+                <option value="open" {% if filters.issue_status == 'open' %}selected{% endif %}>Open</option>
+                <option value="in_progress" {% if filters.issue_status == 'in_progress' %}selected{% endif %}>In Progress</option>
+                <option value="resolved" {% if filters.issue_status == 'resolved' %}selected{% endif %}>Resolved</option>
+            </select>
+        </div>
+        <div>
+            <label for="issue_severity">Severity</label>
+            <select id="issue_severity" name="issue_severity">
+                <option value="all" {% if filters.issue_severity == 'all' %}selected{% endif %}>All</option>
+                <option value="low" {% if filters.issue_severity == 'low' %}selected{% endif %}>Low</option>
+                <option value="medium" {% if filters.issue_severity == 'medium' %}selected{% endif %}>Medium</option>
+                <option value="high" {% if filters.issue_severity == 'high' %}selected{% endif %}>High</option>
+            </select>
+        </div>
+        <div>
+            <label for="issue_search">Search Issue</label>
+            <input id="issue_search" name="issue_search" type="text" value="{{ filters.issue_search }}" placeholder="Location or details">
+        </div>
+        <div style="align-self: end;">
+            <button class="btn" type="submit">Apply Filters</button>
+            <a class="btn btn-muted" href="{{ url_for('dashboard') }}">Reset</a>
+        </div>
+    </form>
+    <table>
+        <thead>
+            <tr>
+                <th>Category</th>
+                <th>Location</th>
+                <th>Severity</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for issue in issues %}
+            <tr>
+                <td>{{ issue.category|title }}</td>
+                <td>{{ issue.location }}</td>
+                <td>{{ issue.severity|title }}</td>
+                <td><span class="status-pill status-{{ issue.status }}">{{ issue.status }}</span></td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="4">No issues found.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endblock %}

@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}{{ university_name }}{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <header class="top-nav">
+        <div class="brand-left">
+            <img class="brand-logo" src="{{ url_for('branding_logo') }}" alt="{{ university_name }} logo">
+            <div class="brand-title">
+                <h1>{{ university_name }}</h1>
+                <p>{{ motto }}</p>
+            </div>
+        </div>
+        <nav class="nav-links">
+            <a href="#" onclick="if (window.history.length > 1) { history.back(); } else { window.location='{{ url_for('home') }}'; } return false;">Back</a>
+            <a href="{{ url_for('home') }}">Home</a>
+            {% if g.current_user %}
+                <a href="{{ url_for('dashboard') }}">Dashboard</a>
+                {% if g.current_user.role in ['faculty', 'admin'] %}
+                    <a href="{{ url_for('faculty_admin') }}">Faculty Admin</a>
+                {% endif %}
+                {% if g.current_user.role in ['student', 'day_scholar'] %}
+                    <a href="{{ url_for('request_permission') }}">Permission</a>
+                    <a href="{{ url_for('report_issue') }}">Issue Report</a>
+                {% endif %}
+                <a href="{{ url_for('logout') }}">Logout</a>
+            {% else %}
+                <a href="{{ url_for('login') }}">Login</a>
+                <a href="{{ url_for('register_student') }}">Register</a>
+            {% endif %}
+        </nav>
+    </header>
+
+    <main class="container">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <div class="flash-wrap">
+                    {% for category, message in messages %}
+                        <div class="flash flash-{{ category }}">{{ message }}</div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="footer">
+        <div class="footer-brand">
+            <img class="brand-logo" src="{{ url_for('branding_logo') }}" alt="{{ university_name }} logo">
+            <div>
+                <strong>{{ university_name }}</strong><br>
+                <small>Hostel and Day Scholar Management System</small>
+            </div>
+        </div>
+        <div>© {{ university_name }} 2026. All rights reserved.</div>
+    </footer>
+</body>
+</html>
