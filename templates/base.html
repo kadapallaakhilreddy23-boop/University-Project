@@ -1,62 +1,152 @@
 <!DOCTYPE html>
+
 <html lang="en">
+
 <head>
+
     <meta charset="UTF-8">
+
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <meta name="description" content="{{ university_name }} — Official Hostel & Day Scholar Management Portal">
+
     <title>{% block title %}{{ university_name }}{% endblock %}</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,500;0,600;0,700;0,800;1,600&display=swap" rel="stylesheet">
+
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+
+    {% block extra_head %}{% endblock %}
+
 </head>
-<body>
+
+<body class="{% block body_class %}{% endblock %}">
+
     <header class="top-nav">
-        <div class="brand-left">
+
+        <a class="brand-left" href="{{ url_for('home') }}">
+
             <img class="brand-logo" src="{{ url_for('branding_logo') }}" alt="{{ university_name }} logo">
-            <div class="brand-title">
-                <h1>{{ university_name }}</h1>
-                <p>{{ motto }}</p>
+
+            <div class="brand-title brand-title-compact">
+
+                <span class="brand-tagline">{{ motto }}</span>
+
             </div>
-        </div>
-        <nav class="nav-links">
-            <a href="#" onclick="if (window.history.length > 1) { history.back(); } else { window.location='{{ url_for('home') }}'; } return false;">Back</a>
+
+        </a>
+
+        <nav class="nav-links" aria-label="Main navigation">
+
+            <a href="{{ url_for('go_back') }}">Back</a>
+
             <a href="{{ url_for('home') }}">Home</a>
+
             {% if g.current_user %}
+
                 <a href="{{ url_for('dashboard') }}">Dashboard</a>
+
+                <a href="{{ url_for('profile') }}">Profile</a>
+
+                {% if g.current_user.role == 'admin' %}
+
+                    <a href="{{ url_for('admin_games') }}">Indoor Games</a>
+
+                {% endif %}
+
                 {% if g.current_user.role in ['faculty', 'admin'] %}
+
                     <a href="{{ url_for('faculty_admin') }}">Faculty Admin</a>
+
                 {% endif %}
+
+                {% if g.current_user.role == 'student' %}
+
+                    <a href="{{ url_for('games_book') }}">Book Games</a>
+
+                {% endif %}
+
+                {% if g.current_user.role in ['security', 'faculty', 'admin'] %}
+
+                    <a href="{{ url_for('security_scan') }}">Security Scan</a>
+
+                {% endif %}
+
                 {% if g.current_user.role in ['student', 'day_scholar'] %}
+
                     <a href="{{ url_for('request_permission') }}">Permission</a>
+
                     <a href="{{ url_for('report_issue') }}">Issue Report</a>
+
                 {% endif %}
-                <a href="{{ url_for('logout') }}">Logout</a>
+
+                <a class="nav-cta" href="{{ url_for('logout') }}">Logout</a>
+
             {% else %}
+
                 <a href="{{ url_for('login') }}">Login</a>
-                <a href="{{ url_for('register_student') }}">Register</a>
+
+                <a class="nav-cta" href="{{ url_for('register_student') }}">Register</a>
+
             {% endif %}
+
         </nav>
+
     </header>
 
-    <main class="container">
+
+
+    <main class="{% block main_class %}container{% endblock %}">
+
         {% with messages = get_flashed_messages(with_categories=true) %}
+
             {% if messages %}
-                <div class="flash-wrap">
+
+                <div class="flash-wrap" role="status">
+
                     {% for category, message in messages %}
+
                         <div class="flash flash-{{ category }}">{{ message }}</div>
+
                     {% endfor %}
+
                 </div>
+
             {% endif %}
+
         {% endwith %}
+
         {% block content %}{% endblock %}
+
     </main>
 
+
+
     <footer class="footer">
+
         <div class="footer-brand">
+
             <img class="brand-logo" src="{{ url_for('branding_logo') }}" alt="{{ university_name }} logo">
+
             <div>
+
                 <strong>{{ university_name }}</strong><br>
+
                 <small>Hostel and Day Scholar Management System</small>
+
             </div>
+
         </div>
+
         <div>© {{ university_name }} 2026. All rights reserved.</div>
+
     </footer>
+
 </body>
+
 </html>
+

@@ -9,8 +9,37 @@
     <p>
         <a class="btn" href="{{ url_for('request_permission') }}">New Permission Request</a>
         <a class="btn btn-muted" href="{{ url_for('report_issue') }}">Report New Issue</a>
+        {% if is_hosteller %}
+        <a class="btn btn-muted" href="{{ url_for('games_book') }}">Book Indoor Games</a>
+        {% endif %}
     </p>
 </section>
+
+{% if is_hosteller and game_bookings %}
+<section class="panel">
+    <h3>Upcoming Game Bookings</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>Game</th>
+                <th>Date</th>
+                <th>Time</th>
+                <th>Receipt</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for b in game_bookings %}
+            <tr>
+                <td>{{ b.game_name }}</td>
+                <td>{{ b.slot_date }}</td>
+                <td>{{ b.start_time }} – {{ b.end_time }}</td>
+                <td><a class="btn btn-muted" href="{{ url_for('game_booking_receipt', booking_id=b.id) }}">QR Receipt</a></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endif %}
 
 <section class="panel">
     <h3>My Permission Requests</h3>
@@ -19,7 +48,9 @@
             <label for="perm_status">Status</label>
             <select id="perm_status" name="perm_status">
                 <option value="all" {% if filters.perm_status == 'all' %}selected{% endif %}>All</option>
-                <option value="pending" {% if filters.perm_status == 'pending' %}selected{% endif %}>Pending</option>
+                <option value="pending_parent" {% if filters.perm_status == 'pending_parent' %}selected{% endif %}>Awaiting Parent</option>
+                <option value="pending_faculty" {% if filters.perm_status == 'pending_faculty' %}selected{% endif %}>Awaiting Faculty</option>
+                <option value="pending" {% if filters.perm_status == 'pending' %}selected{% endif %}>Any Pending</option>
                 <option value="approved" {% if filters.perm_status == 'approved' %}selected{% endif %}>Approved</option>
                 <option value="rejected" {% if filters.perm_status == 'rejected' %}selected{% endif %}>Rejected</option>
             </select>
@@ -28,10 +59,12 @@
             <label for="perm_type">Type</label>
             <select id="perm_type" name="perm_type">
                 <option value="all" {% if filters.perm_type == 'all' %}selected{% endif %}>All</option>
-                <option value="late_outing" {% if filters.perm_type == 'late_outing' %}selected{% endif %}>Late-Night Outing</option>
                 <option value="leave_pass" {% if filters.perm_type == 'leave_pass' %}selected{% endif %}>Leave Pass</option>
+                <option value="late_entry" {% if filters.perm_type == 'late_entry' %}selected{% endif %}>Late Entry</option>
+                <option value="late_outing" {% if filters.perm_type == 'late_outing' %}selected{% endif %}>Late-Night Outing</option>
                 <option value="early_departure" {% if filters.perm_type == 'early_departure' %}selected{% endif %}>Early Departure</option>
                 <option value="commute_pass" {% if filters.perm_type == 'commute_pass' %}selected{% endif %}>Commute Pass</option>
+                <option value="day_scholar_update" {% if filters.perm_type == 'day_scholar_update' %}selected{% endif %}>Day Scholar Update</option>
             </select>
         </div>
         <div>
@@ -51,6 +84,7 @@
                 <th>Window</th>
                 <th>Status</th>
                 <th>Note</th>
+                <th>Receipt</th>
             </tr>
         </thead>
         <tbody>
@@ -59,12 +93,18 @@
                 <td>{{ p.permission_type.replace('_', ' ')|title }}</td>
                 <td>{{ p.destination }}</td>
                 <td>{{ p.requested_from.strftime('%d %b %Y %I:%M %p') }} - {{ p.requested_to.strftime('%d %b %Y %I:%M %p') }}</td>
-                <td><span class="status-pill status-{{ p.status }}">{{ p.status }}</span></td>
+                <td><span class="status-pill status-{{ p.status }}">{{ status_label(p.status) }}</span></td>
                 <td>{{ p.decision_note or '-' }}</td>
+                <td>
+                    <a class="btn btn-muted" href="{{ url_for('permission_receipt', request_id=p.id) }}">Receipt</a>
+                    {% if p.status == 'approved' %}
+                    <span class="qr-badge" title="QR available on receipt">QR</span>
+                    {% endif %}
+                </td>
             </tr>
             {% else %}
             <tr>
-                <td colspan="5">No requests found.</td>
+                <td colspan="6">No requests found.</td>
             </tr>
             {% endfor %}
         </tbody>

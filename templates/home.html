@@ -1,88 +1,112 @@
 {% extends "base.html" %}
 {% block title %}{{ university_name }} | Official Portal{% endblock %}
+{% block body_class %}page-home{% endblock %}
+{% block main_class %}main-home{% endblock %}
 {% block content %}
-<section class="hero hero-home">
-    <div class="hero-image">
-        <div class="hero-content">
-            <div class="hero-badge">Official Portal</div>
-            <h2>Hostel & Day Scholar Management System</h2>
-            <p class="hero-subtitle">
-                One secure platform for permission requests, issue reporting, faculty approvals, and parent updates — with full
-                accountability and audit trails.
-            </p>
-            <div class="hero-actions">
-                <a class="btn" href="{{ url_for('login') }}">Access Dashboard</a>
-                <a class="btn btn-muted" href="{{ url_for('register_student') }}">Student Registration</a>
+<section class="hero-campus" style="--hero-bg: url('{{ url_for('homepage_image') }}');">
+    <div class="hero-campus-overlay"></div>
+    <div class="hero-campus-content">
+        <p class="hero-university">{{ university_name }}</p>
+        <div class="hero-badge">Official Student Portal</div>
+        <h1 class="hero-title">Excellence in <em>Living &amp; Learning</em></h1>
+        <p class="hero-subtitle">
+            A world-class digital campus experience — permissions, QR-verified passes, indoor game bookings, and real-time parent updates, unified for every Kaveri scholar.
+        </p>
+        <div class="hero-actions">
+            <a class="btn btn-lg" href="{{ url_for('login') }}">Access Portal</a>
+            <a class="btn btn-outline btn-lg" href="{{ url_for('register_student') }}">Student Registration</a>
+        </div>
+        <div class="hero-kpis hero-kpis-glass">
+            <div class="kpi">
+                <div class="kpi-label">Secure Access</div>
+                <div class="kpi-value">Students · Faculty · Parents · Security</div>
             </div>
-            <div class="hero-kpis">
-                <div class="kpi">
-                    <div class="kpi-label">Role-based access</div>
-                    <div class="kpi-value">Students • Faculty • Parents</div>
-                </div>
-                <div class="kpi">
-                    <div class="kpi-label">Fast workflows</div>
-                    <div class="kpi-value">Requests, approvals, tracking</div>
-                </div>
-                <div class="kpi">
-                    <div class="kpi-label">Accountability</div>
-                    <div class="kpi-value">Audit log + notifications</div>
-                </div>
+            <div class="kpi">
+                <div class="kpi-label">Digital Workflow</div>
+                <div class="kpi-value">Request → Approve → QR Validate</div>
+            </div>
+            <div class="kpi">
+                <div class="kpi-label">Full Transparency</div>
+                <div class="kpi-value">Notifications &amp; Audit Trail</div>
             </div>
         </div>
     </div>
 </section>
 
-<section class="quote">
-    “Discipline builds character, unity builds strength, and education builds a nation.”
+<section class="campus-showcase panel panel-elevated">
+    <div class="campus-showcase-grid">
+        <figure class="campus-frame">
+            <img src="{{ url_for('homepage_image') }}" alt="{{ university_name }} campus" loading="eager" decoding="async">
+            <figcaption>{{ university_name }} — Shaping the New</figcaption>
+        </figure>
+        <div class="campus-copy">
+            <span class="ku-eyebrow">About the Portal</span>
+            <h2 class="ku-section-title">Welcome to {{ university_name }}</h2>
+            <p class="muted">
+                This institution-grade platform manages hostel and day-scholar operations with the same rigour as our academic standards — verified records, accountable decisions, and seamless student services.
+            </p>
+            <ul class="trust-list">
+                <li>Official permission receipts with dual QR verification</li>
+                <li>Hostel recreation room slot booking (chess, carrom &amp; more)</li>
+                <li>Instant parent notifications on every approval</li>
+                <li>Security desk validation with complete scan audit logs</li>
+            </ul>
+        </div>
+    </div>
 </section>
 
-<section class="panel panel-tight">
+<section class="quote quote-elevated">
+    <p>“Discipline builds character, unity builds strength, and education builds a nation.”</p>
+    <span class="quote-motto">{{ motto }}</span>
+</section>
+
+<section class="panel panel-elevated">
     <div class="home-split">
         <div>
-            <h2>Welcome to {{ university_name }}</h2>
-            <p class="muted">
-                This portal maintains official records for hostel and day scholar administration. Submit requests, track decisions,
-                and keep guardians informed — all in a single verified system.
-            </p>
+            <span class="ku-eyebrow">Our Community</span>
+            <h2 class="section-heading">Built for Every Stakeholder</h2>
             <div class="feature-grid">
-                <div class="feature-card">
+                <div class="feature-card feature-card-hover">
+                    <div class="feature-icon">🎓</div>
                     <h3>Students</h3>
-                    <p>Submit permission requests, report campus issues, and track approvals in real time.</p>
+                    <p>Submit permissions, book game slots, report issues, and download QR receipts — all from one dashboard.</p>
                 </div>
-                <div class="feature-card">
-                    <h3>Faculty & Admin</h3>
-                    <p>Review queues, approve/reject decisions, update issue progress, and maintain an audit trail.</p>
+                <div class="feature-card feature-card-hover">
+                    <div class="feature-icon">📋</div>
+                    <h3>Faculty &amp; Admin</h3>
+                    <p>Review approval queues, manage recreation schedules, track issues, and maintain a full audit trail.</p>
                 </div>
-                <div class="feature-card">
+                <div class="feature-card feature-card-hover">
+                    <div class="feature-icon">👨‍👩‍👧</div>
                     <h3>Parents</h3>
-                    <p>View ward updates, see permission outcomes, and receive official notifications.</p>
+                    <p>Stay informed with official notifications on your ward's permissions and institutional updates.</p>
                 </div>
             </div>
         </div>
         <div class="home-callout">
-            <h3>Quick Start</h3>
+            <h3>Get Started</h3>
             <ol class="steps">
-                <li>Register as a Student / Day Scholar</li>
-                <li>Sign in with your Roll Number / Staff ID / Parent ID</li>
-                <li>Open the dashboard to submit or review requests</li>
+                <li>Register as a Hosteller or Day Scholar</li>
+                <li>Sign in with your Roll Number or ID</li>
+                <li>Access your personalised dashboard</li>
             </ol>
             <div class="callout-actions">
                 <a class="btn" href="{{ url_for('login') }}">Sign In</a>
-                <a class="btn btn-muted" href="{{ url_for('register_student') }}">Create Student Account</a>
+                <a class="btn btn-outline" href="{{ url_for('register_student') }}">Create Account</a>
             </div>
         </div>
     </div>
 </section>
 
-<section class="panel">
+<section class="panel panel-elevated mission-vision">
     <div class="grid-2">
-        <div>
-            <h3>Mission</h3>
-            <p>To provide secure, reliable, and student-centered residential and commute governance for every learner.</p>
+        <div class="mission-card">
+            <h3>Our Mission</h3>
+            <p>To provide secure, reliable, and student-centred residential and commute governance that supports academic excellence at {{ university_name }}.</p>
         </div>
-        <div>
-            <h3>Vision</h3>
-            <p>To be a trusted institutional community where safety, responsibility, and academic focus are upheld daily.</p>
+        <div class="mission-card">
+            <h3>Our Vision</h3>
+            <p>To be a trusted university community where safety, responsibility, and focus on learning are upheld through world-class digital infrastructure.</p>
         </div>
     </div>
 </section>

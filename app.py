@@ -1,15 +1,14 @@
-from __future__ import annotations
-
-import base64
-import json
 import os
-import urllib.parse
-import urllib.request
-from dataclasses import dataclass, field
+import secrets
+import sqlite3
+from dataclasses import dataclass
 from datetime import datetime, timedelta
-from functools import wraps
+import base64
+import hashlib
+import hmac
+import json
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Optional
 
 from flask import (
     Flask,
@@ -25,798 +24,2243 @@ from flask import (
 )
 from werkzeug.security import check_password_hash, generate_password_hash
 
-UNIVERSITY_NAME = "Kaveri University"
-MOTTO = "Knowledge • Discipline • Integrity"
 
-app = Flask(__name__)
-app.secret_key = "dev-secret-key-change-me"
-
-
-@dataclass
-class User:
-    id: int
-    full_name: str
-    login_id: str
-    email: str
-    phone: str
-    role: str  # student | day_scholar | faculty | admin | parent
-    password_hash: str
-    parent_user_id: Optional[int] = None
+APP_DIR = Path(__file__).resolve().parent
+DB_PATH = APP_DIR / "app.db"
+ASSETS_DIR = APP_DIR / "assets"
 
 
-@dataclass
-class PermissionRequest:
-    id: int
-    student_id: int
-    permission_type: str
-    destination: str
-    requested_from: datetime
-    requested_to: datetime
-    reason: str
-    status: str = "pending"  # pending | approved | rejected
-    decision_note: Optional[str] = None
-    created_at: datetime = field(default_factory=datetime.utcnow)
+def create_app() -> Flask:
+    app = Flask(__name__)
+    app.secret_key = os.environ.get("FLASK_SECRET_KEY") or secrets.token_hex(32)
 
-
-@dataclass
-class IssueReport:
-    id: int
-    student_id: int
-    category: str
-    severity: str
-    location: str
-    issue_text: str
-    status: str = "open"  # open | in_progress | resolved
-    created_at: datetime = field(default_factory=datetime.utcnow)
-
-
-@dataclass
-class AuditLog:
-    id: int
-    actor_id: int
-    action: str
-    target_type: str
-    target_id: int
-    details: Optional[str] = None
-    timestamp: datetime = field(default_factory=datetime.utcnow)
-
-
-@dataclass
-class Notification:
-    id: int
-    recipient_id: int
-    title: str
-    message: str
-    is_read: bool = False
-    created_at: datetime = field(default_factory=datetime.utcnow)
-
-
-USERS: Dict[int, User] = {}
-USERS_BY_LOGIN: Dict[str, int] = {}
-PERMISSIONS: List[PermissionRequest] = []
-ISSUES: List[IssueReport] = []
-AUDIT_LOGS: List[AuditLog] = []
-NOTIFICATIONS: List[Notification] = []
-
-_next_ids = {"user": 1, "permission": 1, "issue": 1, "audit": 1, "notification": 1}
-
-
-def _next_id(kind: str) -> int:
-    _next_ids[kind] += 1
-    return _next_ids[kind] - 1
-
-
-def _add_user(
-    *,
-    full_name: str,
-    login_id: str,
-    email: str,
-    phone: str,
-    role: str,
-    password: str,
-    parent_user_id: Optional[int] = None,
-) -> User:
-    uid = _next_id("user")
-    user = User(
-        id=uid,
-        full_name=full_name,
-        login_id=login_id,
-        email=email,
-        phone=phone,
-        role=role,
-        password_hash=generate_password_hash(password),
-        parent_user_id=parent_user_id,
-    )
-    USERS[uid] = user
-    USERS_BY_LOGIN[login_id] = uid
-    return user
-
-
-def _seed_demo_data() -> None:
-    if USERS:
-        return
-
-    admin = _add_user(
-        full_name="Admin Office",
-        login_id="ADMIN1",
-        email="admin@kaveri.edu",
-        phone="0000000000",
-        role="admin",
-        password="admin12345",
-    )
-    _add_user(
-        full_name="Faculty Warden",
-        login_id="FAC1",
-        email="warden@kaveri.edu",
-        phone="0000000001",
-        role="faculty",
-        password="faculty12345",
-    )
-    parent = _add_user(
-        full_name="Parent Account",
-        login_id="PARENT1001",
-        email="parent@kaveri.edu",
-        phone="9390911031",
-        role="parent",
-        password="parent12345",
-    )
-    student = _add_user(
-        full_name="Demo Student",
-        login_id="STU1001",
-        email="stu1001@kaveri.edu",
-        phone="9999999999",
-        role="student",
-        password="student12345",
-        parent_user_id=parent.id,
+    app.config.update(
+        UNIVERSITY_NAME=os.environ.get("UNIVERSITY_NAME", "Kaveri University"),
+        MOTTO=os.environ.get("UNIVERSITY_MOTTO", "Shaping the new"),
+        SESSION_COOKIE_HTTPONLY=True,
+        SESSION_COOKIE_SAMESITE="Lax",
     )
 
-    now = datetime.utcnow()
-    PERMISSIONS.append(
-        PermissionRequest(
-            id=_next_id("permission"),
-            student_id=student.id,
-            permission_type="leave_pass",
-            destination="Home",
-            requested_from=now + timedelta(days=1),
-            requested_to=now + timedelta(days=3),
-            reason="Family function",
-            status="pending",
+    def db() -> sqlite3.Connection:
+        if "db" not in g:
+            conn = sqlite3.connect(DB_PATH)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA foreign_keys = ON;")
+            g.db = conn
+        return g.db
+
+    @app.teardown_appcontext
+    def close_db(_: Optional[BaseException]) -> None:
+        conn = g.pop("db", None)
+        if conn is not None:
+            conn.close()
+
+    def _tables_referencing_users_old(conn: sqlite3.Connection) -> list[str]:
+        rows = conn.execute(
+            """
+            SELECT name FROM sqlite_master
+            WHERE type = 'table' AND sql IS NOT NULL AND instr(sql, 'users_old') > 0
+            """
+        ).fetchall()
+        return [str(r["name"]) for r in rows]
+
+    def _repair_users_old_foreign_keys(conn: sqlite3.Connection) -> None:
+        """Fix tables left pointing at users_old after a partial users-table migration."""
+        broken = _tables_referencing_users_old(conn)
+        if not broken:
+            return
+
+        table_ddl = {
+            "permission_requests": """
+                CREATE TABLE permission_requests (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    student_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    permission_type TEXT NOT NULL,
+                    destination TEXT NOT NULL,
+                    requested_from TEXT NOT NULL,
+                    requested_to TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK(status IN ('pending_parent','pending_faculty','approved','rejected')),
+                    decision_note TEXT,
+                    decided_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                    parent_decision_note TEXT,
+                    parent_decided_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                    parent_decided_at TEXT,
+                    created_at TEXT NOT NULL,
+                    security_validated_at TEXT,
+                    security_validated_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+                );
+            """,
+            "issues": """
+                CREATE TABLE issues (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    student_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    category TEXT NOT NULL,
+                    severity TEXT NOT NULL CHECK(severity IN ('low','medium','high')),
+                    location TEXT NOT NULL,
+                    issue_text TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK(status IN ('open','in_progress','resolved')),
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+            """,
+            "notifications": """
+                CREATE TABLE notifications (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    title TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    is_read INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL
+                );
+            """,
+            "qr_scan_logs": """
+                CREATE TABLE qr_scan_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    request_id INTEGER REFERENCES permission_requests(id) ON DELETE SET NULL,
+                    actor_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                    result TEXT NOT NULL,
+                    details TEXT,
+                    raw_token TEXT,
+                    scanned_at TEXT NOT NULL
+                );
+            """,
+        }
+
+        conn.execute("PRAGMA foreign_keys = OFF")
+        try:
+            for table in broken:
+                ddl = table_ddl.get(table)
+                if not ddl:
+                    continue
+                cols = [str(r["name"]) for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+                if not cols:
+                    continue
+                col_csv = ", ".join(cols)
+                tmp = f"{table}__ku_fix"
+                conn.execute(f"CREATE TABLE {tmp} AS SELECT {col_csv} FROM {table}")
+                conn.execute(f"DROP TABLE {table}")
+                conn.executescript(ddl)
+                conn.execute(f"INSERT INTO {table} ({col_csv}) SELECT {col_csv} FROM {tmp}")
+                conn.execute(f"DROP TABLE {tmp}")
+            conn.commit()
+        finally:
+            conn.execute("PRAGMA foreign_keys = ON")
+
+    def init_db() -> None:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON;")
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                login_id TEXT UNIQUE NOT NULL,
+                full_name TEXT NOT NULL,
+                email TEXT,
+                phone TEXT,
+                role TEXT NOT NULL CHECK(role IN ('student','day_scholar','parent','faculty','admin','security')),
+                password_hash TEXT NOT NULL,
+                parent_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS permission_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                student_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                permission_type TEXT NOT NULL,
+                destination TEXT NOT NULL,
+                requested_from TEXT NOT NULL,
+                requested_to TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                status TEXT NOT NULL CHECK(status IN ('pending_parent','pending_faculty','approved','rejected')),
+                decision_note TEXT,
+                decided_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                parent_decision_note TEXT,
+                parent_decided_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                parent_decided_at TEXT,
+                created_at TEXT NOT NULL,
+                security_validated_at TEXT,
+                security_validated_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS issues (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                student_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                category TEXT NOT NULL,
+                severity TEXT NOT NULL CHECK(severity IN ('low','medium','high')),
+                location TEXT NOT NULL,
+                issue_text TEXT NOT NULL,
+                status TEXT NOT NULL CHECK(status IN ('open','in_progress','resolved')),
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS notifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                title TEXT NOT NULL,
+                message TEXT NOT NULL,
+                is_read INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS audit_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                actor_id INTEGER,
+                action TEXT NOT NULL,
+                target_type TEXT NOT NULL,
+                target_id INTEGER NOT NULL,
+                details TEXT,
+                timestamp TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS qr_scan_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                request_id INTEGER REFERENCES permission_requests(id) ON DELETE SET NULL,
+                actor_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                result TEXT NOT NULL,
+                details TEXT,
+                raw_token TEXT,
+                scanned_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS indoor_games (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                description TEXT,
+                location TEXT NOT NULL DEFAULT 'Recreation Room',
+                max_players INTEGER NOT NULL DEFAULT 2,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS game_slots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                game_id INTEGER NOT NULL REFERENCES indoor_games(id) ON DELETE CASCADE,
+                slot_date TEXT NOT NULL,
+                start_time TEXT NOT NULL,
+                end_time TEXT NOT NULL,
+                max_bookings INTEGER NOT NULL DEFAULT 1,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                notes TEXT,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS game_bookings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                slot_id INTEGER NOT NULL REFERENCES game_slots(id) ON DELETE CASCADE,
+                student_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                status TEXT NOT NULL CHECK(status IN ('confirmed','cancelled')),
+                created_at TEXT NOT NULL,
+                UNIQUE(slot_id, student_id)
+            );
+            """
         )
-    )
-    ISSUES.append(
-        IssueReport(
-            id=_next_id("issue"),
-            student_id=student.id,
-            category="hostel",
-            severity="medium",
-            location="Block A - Room 203",
-            issue_text="Ceiling fan not working.",
-            status="open",
-        )
-    )
-    AUDIT_LOGS.append(
-        AuditLog(
-            id=_next_id("audit"),
-            actor_id=admin.id,
-            action="seed",
-            target_type="system",
-            target_id=0,
-            details="Demo data initialized",
-        )
-    )
 
+        # Seed default indoor games if empty.
+        gcount = conn.execute("SELECT COUNT(*) AS c FROM indoor_games").fetchone()
+        if gcount and int(gcount["c"]) == 0:
+            defaults = [
+                ("Chess", "Classic strategy board game", "Recreation Room — Block A", 2, 1),
+                ("Carrom", "Finger-flick board game", "Recreation Room — Block A", 4, 2),
+                ("Table Tennis", "Indoor paddle sport", "Games Hall", 2, 3),
+                ("Badminton (Indoor)", "Shuttle sport in indoor court", "Indoor Sports Court", 4, 4),
+                ("Snooker", "Cue sport table", "Recreation Lounge", 2, 5),
+            ]
+            for name, desc, loc, max_p, order in defaults:
+                conn.execute(
+                    """
+                    INSERT INTO indoor_games (name, description, location, max_players, is_active, sort_order, created_at)
+                    VALUES (?, ?, ?, ?, 1, ?, ?)
+                    """,
+                    (name, desc, loc, max_p, order, datetime.utcnow().isoformat()),
+                )
+            conn.commit()
 
-def current_user() -> Optional[User]:
-    uid = session.get("user_id")
-    if not uid:
-        return None
-    return USERS.get(int(uid))
+        # Migrate permission_requests for security validation columns if DB existed before.
+        try:
+            cols = {r["name"] for r in conn.execute("PRAGMA table_info(permission_requests)").fetchall()}
+            if "security_validated_at" not in cols:
+                conn.execute("ALTER TABLE permission_requests ADD COLUMN security_validated_at TEXT")
+            if "security_validated_by" not in cols:
+                conn.execute("ALTER TABLE permission_requests ADD COLUMN security_validated_by INTEGER")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
 
+        def _migrate_permission_workflow(c: sqlite3.Connection) -> None:
+            try:
+                c.execute("SELECT 1 FROM permission_requests LIMIT 1")
+            except sqlite3.OperationalError:
+                return
+            cols = {r["name"] for r in c.execute("PRAGMA table_info(permission_requests)").fetchall()}
+            if "parent_decided_at" not in cols:
+                for stmt in (
+                    "ALTER TABLE permission_requests ADD COLUMN parent_decision_note TEXT",
+                    "ALTER TABLE permission_requests ADD COLUMN parent_decided_by INTEGER",
+                    "ALTER TABLE permission_requests ADD COLUMN parent_decided_at TEXT",
+                ):
+                    try:
+                        c.execute(stmt)
+                    except sqlite3.OperationalError:
+                        pass
+                c.commit()
+            try:
+                c.execute("UPDATE permission_requests SET status = 'pending_parent' WHERE status = 'pending'")
+                c.commit()
+            except sqlite3.IntegrityError:
+                c.execute("PRAGMA foreign_keys = OFF")
+                c.executescript(
+                    """
+                    ALTER TABLE permission_requests RENAME TO permission_requests_old;
+                    CREATE TABLE permission_requests (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        student_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                        permission_type TEXT NOT NULL,
+                        destination TEXT NOT NULL,
+                        requested_from TEXT NOT NULL,
+                        requested_to TEXT NOT NULL,
+                        reason TEXT NOT NULL,
+                        status TEXT NOT NULL CHECK(status IN ('pending_parent','pending_faculty','approved','rejected')),
+                        decision_note TEXT,
+                        decided_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                        parent_decision_note TEXT,
+                        parent_decided_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                        parent_decided_at TEXT,
+                        created_at TEXT NOT NULL,
+                        security_validated_at TEXT,
+                        security_validated_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+                    );
+                    INSERT INTO permission_requests (
+                        id, student_id, permission_type, destination, requested_from, requested_to,
+                        reason, status, decision_note, decided_by, parent_decision_note,
+                        parent_decided_by, parent_decided_at, created_at, security_validated_at, security_validated_by
+                    )
+                    SELECT
+                        id, student_id, permission_type, destination, requested_from, requested_to,
+                        reason,
+                        CASE status WHEN 'pending' THEN 'pending_parent' ELSE status END,
+                        decision_note, decided_by,
+                        NULL, NULL, NULL,
+                        created_at, security_validated_at, security_validated_by
+                    FROM permission_requests_old;
+                    DROP TABLE permission_requests_old;
+                    PRAGMA foreign_keys = ON;
+                    """
+                )
+                c.commit()
 
-def _normalize_phone_e164(phone: str, *, default_country_code: str = "+91") -> Optional[str]:
-    raw = (phone or "").strip()
-    if not raw:
-        return None
-    digits = "".join(ch for ch in raw if ch.isdigit())
-    if raw.startswith("+") and digits:
-        return f"+{digits}"
-    # India-style 10-digit number
-    if len(digits) == 10:
-        return f"{default_country_code}{digits}"
-    # Already includes country code digits (e.g., 91XXXXXXXXXX)
-    if len(digits) >= 11:
-        return f"+{digits}"
-    return None
+        _migrate_permission_workflow(conn)
 
+        # Migrate qr_scan_logs schema to allow NULL request_id.
+        try:
+            qcols = conn.execute("PRAGMA table_info(qr_scan_logs)").fetchall()
+            req_col = next((r for r in qcols if r["name"] == "request_id"), None)
+            if req_col and int(req_col["notnull"] or 0) == 1:
+                conn.executescript(
+                    """
+                    PRAGMA foreign_keys = OFF;
+                    ALTER TABLE qr_scan_logs RENAME TO qr_scan_logs_old;
+                    CREATE TABLE qr_scan_logs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        request_id INTEGER REFERENCES permission_requests(id) ON DELETE SET NULL,
+                        actor_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                        result TEXT NOT NULL,
+                        details TEXT,
+                        raw_token TEXT,
+                        scanned_at TEXT NOT NULL
+                    );
+                    INSERT INTO qr_scan_logs (id, request_id, actor_id, result, details, raw_token, scanned_at)
+                    SELECT id, request_id, actor_id, result, details, raw_token, scanned_at FROM qr_scan_logs_old;
+                    DROP TABLE qr_scan_logs_old;
+                    PRAGMA foreign_keys = ON;
+                    """
+                )
+                conn.commit()
+        except sqlite3.OperationalError:
+            pass
 
-def _whatsapp_click_to_chat_link(phone_e164: str, text: str) -> str:
-    number = phone_e164.replace("+", "")
-    return f"https://wa.me/{number}?text={urllib.parse.quote(text)}"
+        # Lightweight migration: add security role support if DB existed before.
+        try:
+            conn.execute("SELECT 1 FROM users LIMIT 1")
+            # If CHECK constraint doesn't include 'security' this will raise on insert attempt.
+            conn.execute(
+                "INSERT INTO users (login_id, full_name, email, phone, role, password_hash, parent_user_id, created_at) VALUES (?, ?, ?, ?, ?, ?, NULL, ?)",
+                ("__role_check_probe__", "probe", "", "", "security", generate_password_hash("x"), datetime.utcnow().isoformat()) )
+            conn.execute("DELETE FROM users WHERE login_id = ?", ("__role_check_probe__",))
+            conn.commit()
+        except sqlite3.IntegrityError:
+            # Recreate users table with updated role constraint (SQLite can't alter CHECK directly).
+            conn.executescript(
+                """
+                PRAGMA foreign_keys = OFF;
+                ALTER TABLE users RENAME TO users_old;
+                CREATE TABLE users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    login_id TEXT UNIQUE NOT NULL,
+                    full_name TEXT NOT NULL,
+                    email TEXT,
+                    phone TEXT,
+                    role TEXT NOT NULL CHECK(role IN ('student','day_scholar','parent','faculty','admin','security')),
+                    password_hash TEXT NOT NULL,
+                    parent_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                    created_at TEXT NOT NULL
+                );
+                INSERT INTO users (id, login_id, full_name, email, phone, role, password_hash, parent_user_id, created_at)
+                SELECT id, login_id, full_name, email, phone, role, password_hash, parent_user_id, created_at FROM users_old;
+                DROP TABLE users_old;
+                PRAGMA foreign_keys = ON;
+                """
+            )
+            conn.commit()
+            _repair_users_old_foreign_keys(conn)
+        except sqlite3.OperationalError:
+            # Fresh DB; nothing to migrate.
+            pass
 
+        # Repair any DB that still references users_old (e.g. partial migration).
+        _repair_users_old_foreign_keys(conn)
 
-def _send_whatsapp_message(phone_e164: str, text: str) -> bool:
-    """
-    Sends WhatsApp message via WhatsApp Cloud API if configured.
-    Required env vars:
-      - WHATSAPP_TOKEN
-      - WHATSAPP_PHONE_NUMBER_ID
-    Returns True when sent successfully; otherwise False.
-    """
-    token = os.getenv("WHATSAPP_TOKEN")
-    phone_number_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
-    if not token or not phone_number_id:
-        return False
+        # Seed a default admin so the app is usable immediately.
+        admin_login = os.environ.get("DEFAULT_ADMIN_LOGIN", "ADMIN001")
+        admin_password = os.environ.get("DEFAULT_ADMIN_PASSWORD", "admin12345")
+        exists = conn.execute("SELECT 1 FROM users WHERE login_id = ?", (admin_login,)).fetchone()
+        if not exists:
+            conn.execute(
+                """
+                INSERT INTO users (login_id, full_name, email, phone, role, password_hash, parent_user_id, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, NULL, ?)
+                """,
+                (
+                    admin_login,
+                    "System Administrator",
+                    "admin@university.local",
+                    "",
+                    "admin",
+                    generate_password_hash(admin_password),
+                    datetime.utcnow().isoformat(),
+                ),
+            )
 
-    url = f"https://graph.facebook.com/v19.0/{phone_number_id}/messages"
-    payload = {
-        "messaging_product": "whatsapp",
-        "to": phone_e164.replace("+", ""),
-        "type": "text",
-        "text": {"body": text},
-    }
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return 200 <= resp.status < 300
-    except Exception:
-        return False
+        # Seed a default security desk user for QR validation.
+        security_login = os.environ.get("DEFAULT_SECURITY_LOGIN", "SECURITY001")
+        security_password = os.environ.get("DEFAULT_SECURITY_PASSWORD", "security12345")
+        sexists = conn.execute("SELECT 1 FROM users WHERE login_id = ?", (security_login,)).fetchone()
+        if not sexists:
+            conn.execute(
+                """
+                INSERT INTO users (login_id, full_name, email, phone, role, password_hash, parent_user_id, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, NULL, ?)
+                """,
+                (
+                    security_login,
+                    "Security Desk",
+                    "security@university.local",
+                    "",
+                    "security",
+                    generate_password_hash(security_password),
+                    datetime.utcnow().isoformat(),
+                ),
+            )
+        conn.commit()
+        conn.close()
 
+    init_db()
 
-def _notify_parent(student: User, title: str, message: str) -> None:
-    if not student.parent_user_id:
-        return
-    parent = USERS.get(student.parent_user_id)
-    parent_phone = _normalize_phone_e164(parent.phone if parent else "")
+    @dataclass(frozen=True)
+    class CurrentUser:
+        id: int
+        login_id: str
+        full_name: str
+        role: str
 
-    sent = False
-    wa_link = None
-    if parent_phone:
-        sent = _send_whatsapp_message(parent_phone, message)
-        wa_link = _whatsapp_click_to_chat_link(parent_phone, message)
+    def now_iso() -> str:
+        return datetime.utcnow().isoformat()
 
-    NOTIFICATIONS.append(
-        Notification(
-            id=_next_id("notification"),
-            recipient_id=student.parent_user_id,
-            title=title,
-            message=message + (f" WhatsApp: {wa_link}" if (wa_link and not sent) else ""),
-        )
-    )
+    def _b64u_encode(raw: bytes) -> str:
+        return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
+    def _b64u_decode(text: str) -> bytes:
+        pad = "=" * (-len(text) % 4)
+        return base64.urlsafe_b64decode((text + pad).encode("ascii"))
 
-def login_required(view):
-    @wraps(view)
-    def wrapper(*args, **kwargs):
-        if not current_user():
+    def make_qr_token(payload: dict[str, Any]) -> str:
+        body = _b64u_encode(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+        sig = hmac.new(app.secret_key.encode("utf-8"), body.encode("utf-8"), hashlib.sha256).hexdigest()[:24]
+        return f"{body}.{sig}"
+
+    def make_permission_qr_token(request_id: int, expires_iso: str) -> str:
+        return make_qr_token({"t": "perm", "rid": request_id, "exp": expires_iso})
+
+    def make_receipt_qr_token(request_id: int, student_id: int, status: str) -> str:
+        return make_qr_token({"t": "receipt", "rid": request_id, "sid": student_id, "st": status})
+
+    def make_game_booking_qr_token(booking_id: int, slot_end_iso: str) -> str:
+        return make_qr_token({"t": "game", "bid": booking_id, "exp": slot_end_iso})
+
+    def render_qr_svg(token: str) -> Response:
+        try:
+            import io
+
+            import segno  # type: ignore
+        except Exception:
+            return Response("QR generator not installed.", status=503)
+        qr = segno.make(token, error="m")
+        buf = io.StringIO()
+        qr.svg(buf, scale=6, dark="#0b0b0b", light="#ffffff", omitsize=False)
+        return Response(buf.getvalue(), mimetype="image/svg+xml")
+
+    def render_qr_png(token: str) -> Response:
+        try:
+            import io
+
+            import segno  # type: ignore
+        except Exception:
+            return Response("QR generator not installed.", status=503)
+        qr = segno.make(token, error="m")
+        buf = io.BytesIO()
+        qr.save(buf, kind="png", scale=8, dark="#0b0b0b", light="#ffffff")
+        buf.seek(0)
+        return Response(buf.getvalue(), mimetype="image/png")
+
+    def slot_end_iso(slot_date: str, end_time: str) -> str:
+        return f"{slot_date}T{end_time}"
+
+    def slot_starts_in_future(slot_date: str, start_time: str) -> bool:
+        try:
+            start = datetime.strptime(f"{slot_date} {start_time}", "%Y-%m-%d %H:%M")
+        except ValueError:
+            return False
+        return start > datetime.utcnow()
+
+    def count_slot_bookings(slot_id: int) -> int:
+        row = db().execute(
+            "SELECT COUNT(*) AS c FROM game_bookings WHERE slot_id = ? AND status = 'confirmed'",
+            (slot_id,),
+        ).fetchone()
+        return int(row["c"]) if row else 0
+
+    def verify_qr_token(token: str) -> Optional[dict[str, Any]]:
+        try:
+            body, sig = token.split(".", 1)
+        except ValueError:
+            return None
+        expected = hmac.new(app.secret_key.encode("utf-8"), body.encode("utf-8"), hashlib.sha256).hexdigest()[:24]
+        if not hmac.compare_digest(expected, sig):
+            return None
+        try:
+            payload = json.loads(_b64u_decode(body).decode("utf-8"))
+        except Exception:
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    def parse_dt_local(value: str) -> datetime:
+        return datetime.strptime(value, "%Y-%m-%dT%H:%M")
+
+    def row_to_dt(row_value: Any) -> datetime:
+        # Stored as ISO string.
+        return datetime.fromisoformat(str(row_value))
+
+    def get_user_by_login(login_id: str) -> Optional[sqlite3.Row]:
+        return db().execute("SELECT * FROM users WHERE login_id = ?", (login_id.strip(),)).fetchone()
+
+    def get_user_by_id(user_id: int) -> Optional[sqlite3.Row]:
+        return db().execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+
+    def require_login() -> Optional[Response]:
+        if not g.current_user:
             flash("Please sign in to continue.", "warning")
-            return redirect(url_for("login", next=request.path))
-        return view(*args, **kwargs)
+            return redirect(url_for("login"))
+        return None
 
-    return wrapper
+    def require_roles(allowed: set[str]) -> Optional[Response]:
+        if not g.current_user or g.current_user.role not in allowed:
+            flash("Access denied.", "danger")
+            return redirect(url_for("home"))
+        return None
 
-
-@app.before_request
-def _inject_globals():
-    _seed_demo_data()
-    g.current_user = current_user()
-    g.university_name = UNIVERSITY_NAME
-    g.motto = MOTTO
-
-
-@app.context_processor
-def _template_ctx():
-    return {"university_name": UNIVERSITY_NAME, "motto": MOTTO}
-
-
-@app.route("/branding_logo")
-def branding_logo():
-    # If you add `static/branding-logo.png`, it will be used automatically.
-    logo_path = Path(app.root_path) / "static" / "branding-logo.png"
-    if logo_path.exists():
-        return send_file(logo_path)
-
-    # Use the logo you uploaded via Cursor (if present).
-    uploaded_logo_path = Path(
-        r"C:\Users\kadap\.cursor\projects\c-Users-kadap-Desktop-collegeproject\assets"
-        r"\c__Users_kadap_AppData_Roaming_Cursor_User_workspaceStorage_84046a03820687d85434f62036861536_images_kaverriiiiiiiiiiiiiiiiii-ddf12044-612c-4153-9ee2-39d291bfa2a7.png"
-    )
-    if uploaded_logo_path.exists():
-        return send_file(uploaded_logo_path)
-
-    # 1x1 transparent PNG fallback (keeps template working without extra assets)
-    png_b64 = (
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8"
-        "/w8AAuMB9o8l0yAAAAAASUVORK5CYII="
-    )
-    return Response(base64.b64decode(png_b64), mimetype="image/png")
-
-
-@app.route("/")
-def home():
-    return render_template("home.html")
-
-
-@app.route("/register", methods=["GET", "POST"])
-def register_student():
-    if request.method == "POST":
-        full_name = request.form.get("full_name", "").strip()
-        login_id = request.form.get("login_id", "").strip()
-        email = request.form.get("email", "").strip()
-        phone = request.form.get("phone", "").strip()
-        role = request.form.get("role", "").strip()
-        parent_login_id = request.form.get("parent_login_id", "").strip()
-        parent_phone = request.form.get("parent_phone", "").strip()
-        password = request.form.get("password", "")
-
-        if not all([full_name, login_id, email, phone, role, password]):
-            flash("Please fill all required fields.", "danger")
-            return render_template("register.html")
-        if login_id in USERS_BY_LOGIN:
-            flash("That Roll Number is already registered.", "danger")
-            return render_template("register.html")
-        if role not in {"student", "day_scholar"}:
-            flash("Invalid user type selected.", "danger")
-            return render_template("register.html")
-
-        parent_user_id = None
-        if parent_login_id:
-            if not parent_phone:
-                flash("Parent WhatsApp Number is required when Parent Login ID is provided.", "danger")
-                return render_template("register.html")
-            parent_id = USERS_BY_LOGIN.get(parent_login_id)
-            if parent_id is None:
-                parent = _add_user(
-                    full_name="Parent Account",
-                    login_id=parent_login_id,
-                    email=f"{parent_login_id.lower()}@kaveri.edu",
-                    phone=parent_phone,
-                    role="parent",
-                    password="parent12345",
-                )
-                parent_user_id = parent.id
-                flash(
-                    f"Parent account created with password: parent12345 (Login ID: {parent_login_id})",
-                    "info",
-                )
-            else:
-                parent_user_id = parent_id
-                existing_parent = USERS.get(parent_user_id)
-                if existing_parent and not (existing_parent.phone or "").strip():
-                    existing_parent.phone = parent_phone
-
-        user = _add_user(
-            full_name=full_name,
-            login_id=login_id,
-            email=email,
-            phone=phone,
-            role=role,
-            password=password,
-            parent_user_id=parent_user_id,
+    def create_audit(actor_id: Optional[int], action: str, target_type: str, target_id: int, details: str = "") -> None:
+        db().execute(
+            """
+            INSERT INTO audit_logs (actor_id, action, target_type, target_id, details, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (actor_id, action, target_type, target_id, details or None, now_iso()),
         )
-        session["user_id"] = user.id
-        flash("Account created successfully.", "success")
-        return redirect(url_for("dashboard"))
+        db().commit()
 
-    return render_template("register.html")
+    def create_notification(user_id: int, title: str, message: str) -> None:
+        db().execute(
+            """
+            INSERT INTO notifications (user_id, title, message, is_read, created_at)
+            VALUES (?, ?, ?, 0, ?)
+            """,
+            (user_id, title, message, now_iso()),
+        )
+        db().commit()
 
+    def status_label(status: str) -> str:
+        labels = {
+            "pending_parent": "Awaiting Parent Approval",
+            "pending_faculty": "Awaiting Faculty Approval",
+            "approved": "Approved",
+            "rejected": "Rejected",
+            "pending": "Pending",
+        }
+        return labels.get(status, status.replace("_", " ").title())
 
-@app.route("/login", methods=["GET", "POST"])
-def login():
-    if request.method == "POST":
+    def notify_faculty_pending_permission(
+        request_id: int, student_name: str, permission_type: str, destination: str
+    ) -> None:
+        msg = (
+            f"{student_name} — {permission_type.replace('_', ' ')} to {destination} "
+            f"(#{request_id}). Parent approved; faculty action required."
+        )
+        staff = db().execute("SELECT id FROM users WHERE role IN ('admin', 'faculty')").fetchall()
+        for row in staff:
+            create_notification(int(row["id"]), "Permission awaiting faculty approval", msg)
+
+    def student_profile_ready_for_permission(student: sqlite3.Row) -> Optional[str]:
+        if not (student["email"] or "").strip():
+            return "College email is required. Update your Profile before submitting a request."
+        if not (student["phone"] or "").strip():
+            return "Your phone number is required. Update your Profile before submitting a request."
+        if not student["parent_user_id"]:
+            return "Parent/guardian is not linked to your account. Contact administration."
+        parent = get_user_by_id(int(student["parent_user_id"]))
+        if not parent:
+            return "Linked parent account not found. Contact administration."
+        if not (parent["full_name"] or "").strip():
+            return "Parent name is missing on the linked account. Contact administration."
+        if not (parent["phone"] or "").strip():
+            return "Parent phone number is missing. Contact administration."
+        return None
+
+    @app.before_request
+    def load_current_user() -> None:
+        g.current_user = None
+        user_id = session.get("user_id")
+        if user_id:
+            user = get_user_by_id(int(user_id))
+            if user:
+                g.current_user = CurrentUser(
+                    id=int(user["id"]),
+                    login_id=str(user["login_id"]),
+                    full_name=str(user["full_name"]),
+                    role=str(user["role"]),
+                )
+
+    @app.context_processor
+    def inject_brand() -> dict[str, Any]:
+        return {
+            "university_name": app.config["UNIVERSITY_NAME"],
+            "motto": app.config["MOTTO"],
+            "status_label": status_label,
+        }
+
+    @app.get("/branding-logo")
+    def branding_logo() -> Response:
+        env_path = os.environ.get("BRANDING_LOGO_PATH", "").strip()
+        candidates = [
+            Path(env_path) if env_path else None,
+            ASSETS_DIR / "logo.png",
+            ASSETS_DIR / "logo.jpg",
+            ASSETS_DIR / "logo.jpeg",
+        ]
+        for c in candidates:
+            if c and c.exists():
+                return send_file(c)
+
+        # Fallback: inline SVG (keeps app working even without a logo file).
+        svg = """<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <rect width="128" height="128" rx="12" fill="#ffffff"/>
+  <path d="M26 30h16v46c0 10 6 16 16 16s16-6 16-16V30h16v48c0 22-14 36-32 36S26 100 26 78V30z" fill="#f97316"/>
+  <text x="64" y="120" font-family="Segoe UI, Arial" font-size="14" font-weight="800" text-anchor="middle" fill="#111">KU</text>
+</svg>
+"""
+        return Response(svg, mimetype="image/svg+xml")
+
+    @app.get("/homepage-image")
+    def homepage_image() -> Response:
+        candidates = [
+            ASSETS_DIR / "campus.png",
+            ASSETS_DIR / "campus.jpg",
+            ASSETS_DIR / "homepage.png",
+            ASSETS_DIR / "homepage.jpg",
+            ASSETS_DIR / "homepage.jpeg",
+        ]
+        for c in candidates:
+            if c.exists():
+                return send_file(c)
+        return redirect(
+            "https://images.unsplash.com/photo-1562774053-701939374585?auto=format&fit=crop&w=1500&q=80"
+        )
+
+    @app.get("/back")
+    def go_back() -> Response:
+        ref = request.referrer
+        return redirect(ref) if ref else redirect(url_for("home"))
+
+    @app.get("/")
+    def home() -> str:
+        return render_template("home.html")
+
+    @app.route("/login", methods=["GET", "POST"])
+    def login() -> Response | str:
+        if request.method == "POST":
+            login_id = request.form.get("login_id", "").strip()
+            password = request.form.get("password", "")
+            user = get_user_by_login(login_id)
+            if not user or not check_password_hash(user["password_hash"], password):
+                flash("Invalid credentials.", "danger")
+                return render_template("login.html")
+
+            session.clear()
+            session["user_id"] = int(user["id"])
+            flash(f"Welcome, {user['full_name']}!", "success")
+            return redirect(url_for("dashboard"))
+
+        return render_template("login.html")
+
+    def _session_fp_key(login_id: str, phone: str) -> str:
+        return f"fp:{login_id}:{phone}"
+
+    @app.route("/forgot-password", methods=["GET", "POST"])
+    def forgot_password() -> Response | str:
+        if request.method == "GET":
+            session.pop("fp_verified", None)
+            session.pop("fp_login_id", None)
+            session.pop("fp_phone", None)
+            return render_template("forgot_password.html", fp_stage="otp_send", prefills=None)
+
+        stage = request.form.get("stage", "otp_send")
         login_id = request.form.get("login_id", "").strip()
-        password = request.form.get("password", "")
-        uid = USERS_BY_LOGIN.get(login_id)
-        user = USERS.get(uid) if uid else None
-        if not user or not check_password_hash(user.password_hash, password):
-            flash("Invalid Login ID or password.", "danger")
-            return render_template("login.html")
-        session["user_id"] = user.id
-        flash("Signed in successfully.", "success")
+        phone = request.form.get("phone", "").strip()
+        prefills = {"login_id": login_id, "phone": phone}
+
+        if stage == "otp_send":
+            if not login_id or not phone:
+                flash("Please provide Login ID and Phone/WhatsApp Number.", "warning")
+                return render_template("forgot_password.html", fp_stage="otp_send", prefills=prefills)
+
+            user = get_user_by_login(login_id)
+            if not user:
+                flash("Account not found.", "danger")
+                return render_template("forgot_password.html", fp_stage="otp_send", prefills=prefills)
+
+            stored_phone = (user["phone"] or "").strip()
+            if not stored_phone or stored_phone != phone:
+                flash("Phone number does not match this Login ID.", "danger")
+                return render_template("forgot_password.html", fp_stage="otp_send", prefills=prefills)
+
+            otp = f"{secrets.randbelow(1_000_000):06d}"
+            session[_session_fp_key(login_id, phone)] = {
+                "otp": otp,
+                "expires": (datetime.utcnow() + timedelta(minutes=5)).isoformat(),
+            }
+            session["fp_login_id"] = login_id
+            session["fp_phone"] = phone
+            flash(f"OTP sent successfully. Demo OTP: {otp}", "info")
+            return render_template("forgot_password.html", fp_stage="otp_verify", prefills=prefills)
+
+        if stage == "otp_verify":
+            action = request.form.get("action")
+            if action == "resend":
+                user = get_user_by_login(login_id)
+                stored_phone = (user["phone"] or "").strip() if user else ""
+                if not user or not stored_phone or stored_phone != phone:
+                    flash("Please re-check Login ID and Phone Number.", "warning")
+                    return render_template("forgot_password.html", fp_stage="otp_send", prefills=prefills)
+
+                otp = f"{secrets.randbelow(1_000_000):06d}"
+                session[_session_fp_key(login_id, phone)] = {
+                    "otp": otp,
+                    "expires": (datetime.utcnow() + timedelta(minutes=5)).isoformat(),
+                }
+                session["fp_login_id"] = login_id
+                session["fp_phone"] = phone
+                flash(f"OTP resent successfully. Demo OTP: {otp}", "info")
+                return render_template("forgot_password.html", fp_stage="otp_verify", prefills=prefills)
+
+            otp_input = request.form.get("otp", "").strip()
+            payload = session.get(_session_fp_key(login_id, phone))
+            if not payload:
+                flash("OTP session expired. Please send OTP again.", "warning")
+                return render_template("forgot_password.html", fp_stage="otp_send", prefills=prefills)
+
+            if datetime.utcnow() > datetime.fromisoformat(payload["expires"]):
+                session.pop(_session_fp_key(login_id, phone), None)
+                flash("OTP expired. Please resend OTP.", "warning")
+                return render_template("forgot_password.html", fp_stage="otp_send", prefills=prefills)
+
+            if otp_input != payload["otp"]:
+                flash("Invalid OTP.", "danger")
+                return render_template("forgot_password.html", fp_stage="otp_verify", prefills=prefills)
+
+            session["fp_verified"] = True
+            return render_template("forgot_password.html", fp_stage="reset", prefills=prefills)
+
+        if stage == "reset":
+            if not session.get("fp_verified"):
+                flash("Please verify OTP first.", "warning")
+                return render_template("forgot_password.html", fp_stage="otp_send", prefills=prefills)
+
+            new_password = request.form.get("new_password", "")
+            confirm_password = request.form.get("confirm_password", "")
+            if len(new_password) < 8:
+                flash("Password must be at least 8 characters.", "warning")
+                return render_template("forgot_password.html", fp_stage="reset", prefills=prefills)
+            if new_password != confirm_password:
+                flash("Passwords do not match.", "danger")
+                return render_template("forgot_password.html", fp_stage="reset", prefills=prefills)
+
+            user = get_user_by_login(login_id)
+            if not user:
+                flash("Account not found.", "danger")
+                return render_template("forgot_password.html", fp_stage="otp_send", prefills=prefills)
+
+            stored_phone = (user["phone"] or "").strip()
+            if not stored_phone or stored_phone != phone:
+                flash("Phone number does not match this Login ID.", "danger")
+                return render_template("forgot_password.html", fp_stage="otp_send", prefills=prefills)
+
+            db().execute(
+                "UPDATE users SET password_hash = ? WHERE id = ?",
+                (generate_password_hash(new_password), int(user["id"])),
+            )
+            db().commit()
+            create_audit(int(user["id"]), "password_reset", "user", int(user["id"]), "via_otp")
+
+            session.pop(_session_fp_key(login_id, phone), None)
+            session.pop("fp_verified", None)
+            session.pop("fp_login_id", None)
+            session.pop("fp_phone", None)
+
+            flash("Password updated successfully. Please sign in.", "success")
+            return redirect(url_for("login"))
+
+        flash("Invalid forgot-password flow.", "danger")
+        return render_template("forgot_password.html", fp_stage="otp_send", prefills=prefills)
+
+    @app.get("/logout")
+    def logout() -> Response:
+        session.clear()
+        flash("You have been logged out.", "info")
+        return redirect(url_for("home"))
+
+    @app.route("/profile", methods=["GET", "POST"])
+    def profile() -> Response | str:
+        gate = require_login()
+        if gate:
+            return gate
+
+        user = get_user_by_id(g.current_user.id)
+        if not user:
+            flash("Account not found.", "danger")
+            return redirect(url_for("logout"))
+
+        if request.method == "POST":
+            full_name = request.form.get("full_name", "").strip()
+            email = request.form.get("email", "").strip()
+            phone = request.form.get("phone", "").strip()
+
+            if not full_name:
+                flash("Full name is required.", "warning")
+                return render_template("profile.html", user=dict(user))
+
+            db().execute(
+                "UPDATE users SET full_name = ?, email = ?, phone = ? WHERE id = ?",
+                (full_name, email, phone, g.current_user.id),
+            )
+            db().commit()
+            create_audit(g.current_user.id, "profile_updated", "user", g.current_user.id, "contact_details")
+            flash("Profile updated.", "success")
+            return redirect(url_for("profile"))
+
+        return render_template("profile.html", user=dict(user))
+
+    @app.post("/profile/change-password")
+    def profile_change_password() -> Response:
+        gate = require_login()
+        if gate:
+            return gate
+
+        current_password = request.form.get("current_password", "")
+        new_password = request.form.get("new_password", "")
+        confirm_password = request.form.get("confirm_password", "")
+
+        user = get_user_by_id(g.current_user.id)
+        if not user or not check_password_hash(user["password_hash"], current_password):
+            flash("Current password is incorrect.", "danger")
+            return redirect(url_for("profile"))
+        if len(new_password) < 8:
+            flash("New password must be at least 8 characters.", "warning")
+            return redirect(url_for("profile"))
+        if new_password != confirm_password:
+            flash("Passwords do not match.", "danger")
+            return redirect(url_for("profile"))
+
+        db().execute(
+            "UPDATE users SET password_hash = ? WHERE id = ?",
+            (generate_password_hash(new_password), g.current_user.id),
+        )
+        db().commit()
+        create_audit(g.current_user.id, "password_changed", "user", g.current_user.id, "self_service")
+        flash("Password updated.", "success")
+        return redirect(url_for("profile"))
+
+    def _session_otp_key(login_id: str, phone: str) -> str:
+        return f"otp:{login_id}:{phone}"
+
+    @app.route("/register", methods=["GET", "POST"])
+    def register_student() -> Response | str:
+        if request.method == "GET":
+            session.pop("reg_verified", None)
+            session.pop("reg_login_id", None)
+            session.pop("reg_phone", None)
+            return render_template("register.html", reg_stage="otp_send", prefills=None)
+
+        stage = request.form.get("stage", "otp_send")
+        login_id = request.form.get("login_id", "").strip()
+        phone = request.form.get("phone", "").strip()
+        prefills = {"login_id": login_id, "phone": phone}
+
+        if stage == "otp_send":
+            if not login_id or not phone:
+                flash("Please provide Roll Number and Phone Number.", "warning")
+                return render_template("register.html", reg_stage="otp_send", prefills=prefills)
+
+            if get_user_by_login(login_id):
+                flash("An account with this Roll Number already exists. Please log in.", "warning")
+                return redirect(url_for("login"))
+
+            otp = f"{secrets.randbelow(1_000_000):06d}"
+            session[_session_otp_key(login_id, phone)] = {
+                "otp": otp,
+                "expires": (datetime.utcnow() + timedelta(minutes=5)).isoformat(),
+            }
+            session["reg_login_id"] = login_id
+            session["reg_phone"] = phone
+
+            # For a real system, integrate SMS/WhatsApp. For now, show via flash.
+            flash(f"OTP sent successfully. Demo OTP: {otp}", "info")
+            return render_template("register.html", reg_stage="otp_verify", prefills=prefills)
+
+        if stage == "otp_verify":
+            action = request.form.get("action")
+            if action == "resend":
+                otp = f"{secrets.randbelow(1_000_000):06d}"
+                session[_session_otp_key(login_id, phone)] = {
+                    "otp": otp,
+                    "expires": (datetime.utcnow() + timedelta(minutes=5)).isoformat(),
+                }
+                session["reg_login_id"] = login_id
+                session["reg_phone"] = phone
+                flash(f"OTP resent successfully. Demo OTP: {otp}", "info")
+                return render_template("register.html", reg_stage="otp_verify", prefills=prefills)
+
+            otp_input = request.form.get("otp", "").strip()
+            payload = session.get(_session_otp_key(login_id, phone))
+            if not payload:
+                flash("OTP session expired. Please send OTP again.", "warning")
+                return render_template("register.html", reg_stage="otp_send", prefills=prefills)
+
+            if datetime.utcnow() > datetime.fromisoformat(payload["expires"]):
+                session.pop(_session_otp_key(login_id, phone), None)
+                flash("OTP expired. Please resend OTP.", "warning")
+                return render_template("register.html", reg_stage="otp_send", prefills=prefills)
+
+            if otp_input != payload["otp"]:
+                flash("Invalid OTP.", "danger")
+                return render_template("register.html", reg_stage="otp_verify", prefills=prefills)
+
+            session["reg_verified"] = True
+            return render_template("register.html", reg_stage="create", prefills=prefills)
+
+        if stage == "create":
+            if not session.get("reg_verified"):
+                flash("Please verify OTP first.", "warning")
+                return render_template("register.html", reg_stage="otp_send", prefills=prefills)
+
+            full_name = request.form.get("full_name", "").strip()
+            email = request.form.get("email", "").strip()
+            role = request.form.get("role", "student").strip()
+            password = request.form.get("password", "")
+            parent_login_id = request.form.get("parent_login_id", "").strip()
+            parent_phone = request.form.get("parent_phone", "").strip()
+            parent_name = request.form.get("parent_name", "").strip()
+
+            if role not in {"student", "day_scholar"}:
+                flash("Invalid user type.", "danger")
+                return render_template("register.html", reg_stage="create", prefills=prefills)
+
+            if not parent_phone:
+                flash("Parent WhatsApp Number is required.", "warning")
+                return render_template("register.html", reg_stage="create", prefills=prefills)
+
+            if not parent_name:
+                flash("Parent/Guardian name is required.", "warning")
+                return render_template("register.html", reg_stage="create", prefills=prefills)
+
+            parent_user_id = None
+            if not parent_login_id:
+                # Auto-create a parent login if not provided, since parent notifications depend on it.
+                base = f"PARENT_{login_id}".upper()
+                candidate = base
+                n = 1
+                while get_user_by_login(candidate):
+                    n += 1
+                    candidate = f"{base}_{n}"
+                parent_login_id = candidate
+
+            if parent_login_id:
+                existing_parent = get_user_by_login(parent_login_id)
+                if existing_parent:
+                    parent_user_id = int(existing_parent["id"])
+                    db().execute(
+                        "UPDATE users SET full_name = ?, phone = ? WHERE id = ?",
+                        (parent_name, parent_phone, parent_user_id),
+                    )
+                    db().commit()
+                else:
+                    temp_password = secrets.token_urlsafe(8)
+                    cur = db().execute(
+                        """
+                        INSERT INTO users (login_id, full_name, email, phone, role, password_hash, parent_user_id, created_at)
+                        VALUES (?, ?, ?, ?, 'parent', ?, NULL, ?)
+                        """,
+                        (
+                            parent_login_id,
+                            parent_name,
+                            "",
+                            parent_phone,
+                            generate_password_hash(temp_password),
+                            now_iso(),
+                        ),
+                    )
+                    parent_user_id = int(cur.lastrowid)
+                    db().commit()
+                    flash(
+                        f"Parent account created. Parent Login ID: {parent_login_id} (temp password: {temp_password})",
+                        "info",
+                    )
+
+            try:
+                cur = db().execute(
+                    """
+                    INSERT INTO users (login_id, full_name, email, phone, role, password_hash, parent_user_id, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        login_id,
+                        full_name,
+                        email,
+                        phone,
+                        role,
+                        generate_password_hash(password),
+                        parent_user_id,
+                        now_iso(),
+                    ),
+                )
+                db().commit()
+                create_audit(None, "user_registered", "user", int(cur.lastrowid), f"role={role}")
+            except sqlite3.IntegrityError:
+                flash("This Roll Number is already registered.", "danger")
+                return render_template("register.html", reg_stage="otp_send", prefills=prefills)
+
+            session.clear()
+            flash("Account created successfully. Please sign in.", "success")
+            return redirect(url_for("login"))
+
+        flash("Invalid registration flow.", "danger")
+        return render_template("register.html", reg_stage="otp_send", prefills=prefills)
+
+    @app.get("/dashboard")
+    def dashboard() -> Response | str:
+        gate = require_login()
+        if gate:
+            return gate
+
+        if g.current_user.role in {"student", "day_scholar"}:
+            return _dashboard_student()
+        if g.current_user.role in {"admin", "faculty"}:
+            return _dashboard_admin()
+        if g.current_user.role == "parent":
+            return _dashboard_parent()
+        if g.current_user.role == "security":
+            return redirect(url_for("security_scan"))
+
+        flash("Unknown role.", "danger")
+        return redirect(url_for("home"))
+
+    @app.get("/faculty-admin")
+    def faculty_admin() -> Response:
+        gate = require_roles({"admin", "faculty"})
+        if gate:
+            return gate
         return redirect(url_for("dashboard"))
 
-    return render_template("login.html")
+    @app.route("/security", methods=["GET", "POST"])
+    def security_scan() -> Response | str:
+        gate = require_roles({"admin", "faculty", "security"})
+        if gate:
+            return gate
 
+        if request.method == "GET":
+            return render_template("security_scan.html")
 
-@app.route("/logout")
-def logout():
-    session.pop("user_id", None)
-    flash("Signed out.", "info")
-    return redirect(url_for("home"))
+        token = request.form.get("qr_token", "").strip()
+        if not token:
+            flash("Please provide a QR token.", "warning")
+            return render_template("security_scan.html")
 
-
-@app.route("/faculty-admin")
-@login_required
-def faculty_admin():
-    return redirect(url_for("dashboard"))
-
-
-@app.route("/request-permission", methods=["GET", "POST"])
-@login_required
-def request_permission():
-    user = current_user()
-    if not user or user.role not in {"student", "day_scholar"}:
-        flash("Only students/day scholars can submit permission requests.", "danger")
-        return redirect(url_for("dashboard"))
-
-    if request.method == "POST":
-        permission_type = request.form.get("permission_type", "").strip()
-        destination = request.form.get("destination", "").strip()
-        requested_from_raw = request.form.get("requested_from", "").strip()
-        requested_to_raw = request.form.get("requested_to", "").strip()
-        reason = request.form.get("reason", "").strip()
+        payload = verify_qr_token(token)
+        if not payload or payload.get("t") != "perm":
+            db().execute(
+                "INSERT INTO qr_scan_logs (request_id, actor_id, result, details, raw_token, scanned_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (None, g.current_user.id, "invalid", "bad_token", token[:300], now_iso()),
+            )
+            db().commit()
+            flash("Invalid QR code.", "danger")
+            return render_template("security_scan.html")
 
         try:
-            requested_from = datetime.fromisoformat(requested_from_raw)
-            requested_to = datetime.fromisoformat(requested_to_raw)
-        except ValueError:
-            flash("Please provide valid date/time values.", "danger")
-            return render_template("request_permission.html")
+            request_id = int(payload.get("rid"))
+        except Exception:
+            request_id = 0
 
-        if requested_to <= requested_from:
-            flash("End time must be after start time.", "danger")
-            return render_template("request_permission.html")
+        exp_raw = str(payload.get("exp") or "")
+        try:
+            exp_dt = datetime.fromisoformat(exp_raw)
+        except Exception:
+            exp_dt = None
 
-        pr = PermissionRequest(
-            id=_next_id("permission"),
-            student_id=user.id,
-            permission_type=permission_type,
-            destination=destination,
-            requested_from=requested_from,
-            requested_to=requested_to,
-            reason=reason,
-            status="pending",
-        )
-        PERMISSIONS.append(pr)
-        AUDIT_LOGS.append(
-            AuditLog(
-                id=_next_id("audit"),
-                actor_id=user.id,
-                action="create_permission_request",
-                target_type="permission",
-                target_id=pr.id,
-                details=f"{permission_type} to {destination}",
+        pr = db().execute("SELECT * FROM permission_requests WHERE id = ?", (request_id,)).fetchone()
+        if not pr:
+            db().execute(
+                "INSERT INTO qr_scan_logs (request_id, actor_id, result, details, raw_token, scanned_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (request_id, g.current_user.id, "invalid", "request_not_found", token[:300], now_iso()),
             )
-        )
-        if user.parent_user_id:
-            msg = (
-                f"Kaveri University: New permission request submitted by {user.full_name} "
-                f"({permission_type.replace('_', ' ')}) for {destination} "
-                f"({requested_from.strftime('%d %b %Y %I:%M %p')} - {requested_to.strftime('%d %b %Y %I:%M %p')})."
+            db().commit()
+            flash("Request not found.", "danger")
+            return render_template("security_scan.html")
+
+        if pr["status"] != "approved":
+            db().execute(
+                "INSERT INTO qr_scan_logs (request_id, actor_id, result, details, raw_token, scanned_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (request_id, g.current_user.id, "denied", "not_approved", token[:300], now_iso()),
             )
-            if reason:
-                msg += f" Reason: {reason}."
-            _notify_parent(user, "New permission request", msg)
-        flash("Permission request submitted for approval.", "success")
-        return redirect(url_for("dashboard"))
+            db().commit()
+            flash("QR scanned, but this request is not approved.", "warning")
+            return render_template("security_scan.html", pr=dict(pr), token=token)
 
-    return render_template("request_permission.html")
-
-
-@app.route("/report-issue", methods=["GET", "POST"])
-@login_required
-def report_issue():
-    user = current_user()
-    if not user or user.role not in {"student", "day_scholar"}:
-        flash("Only students/day scholars can report issues.", "danger")
-        return redirect(url_for("dashboard"))
-
-    if request.method == "POST":
-        category = request.form.get("category", "").strip()
-        severity = request.form.get("severity", "").strip()
-        location = request.form.get("location", "").strip()
-        issue_text = request.form.get("issue_text", "").strip()
-
-        issue = IssueReport(
-            id=_next_id("issue"),
-            student_id=user.id,
-            category=category,
-            severity=severity,
-            location=location,
-            issue_text=issue_text,
-            status="open",
-        )
-        ISSUES.append(issue)
-        AUDIT_LOGS.append(
-            AuditLog(
-                id=_next_id("audit"),
-                actor_id=user.id,
-                action="create_issue",
-                target_type="issue",
-                target_id=issue.id,
-                details=f"{category} @ {location}",
+        if exp_dt and datetime.utcnow() > exp_dt:
+            db().execute(
+                "INSERT INTO qr_scan_logs (request_id, actor_id, result, details, raw_token, scanned_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (request_id, g.current_user.id, "expired", "expired", token[:300], now_iso()),
             )
-        )
-        if user.parent_user_id:
-            msg = (
-                f"Kaveri University: {user.full_name} reported a campus issue "
-                f"({category}, severity: {severity}) at {location}."
+            db().commit()
+            flash("QR scanned, but this request has expired.", "danger")
+            return render_template("security_scan.html", pr=dict(pr), token=token)
+
+        # Mark validated (idempotent)
+        if not pr["security_validated_at"]:
+            db().execute(
+                """
+                UPDATE permission_requests
+                SET security_validated_at = ?, security_validated_by = ?
+                WHERE id = ?
+                """,
+                (now_iso(), g.current_user.id, request_id),
             )
-            if issue_text:
-                msg += f" Details: {issue_text}"
-            _notify_parent(user, "New issue reported", msg)
-        flash("Issue submitted successfully.", "success")
-        return redirect(url_for("dashboard"))
+            db().commit()
+            create_audit(g.current_user.id, "qr_validated", "permission", request_id, "security_scan")
 
-    return render_template("report_issue.html")
-
-
-@app.route("/permissions/<int:request_id>/decision", methods=["POST"])
-@login_required
-def decide_permission(request_id: int):
-    user = current_user()
-    if not user or user.role not in {"faculty", "admin"}:
-        flash("Unauthorized action.", "danger")
-        return redirect(url_for("dashboard"))
-
-    decision = request.form.get("decision", "").strip()
-    decision_note = request.form.get("decision_note", "").strip() or None
-
-    pr = next((p for p in PERMISSIONS if p.id == request_id), None)
-    if not pr:
-        flash("Permission request not found.", "danger")
-        return redirect(url_for("dashboard"))
-    if pr.status != "pending":
-        flash("This request has already been decided.", "warning")
-        return redirect(url_for("dashboard"))
-    if decision not in {"approved", "rejected"}:
-        flash("Invalid decision.", "danger")
-        return redirect(url_for("dashboard"))
-
-    pr.status = decision
-    pr.decision_note = decision_note
-    AUDIT_LOGS.append(
-        AuditLog(
-            id=_next_id("audit"),
-            actor_id=user.id,
-            action=f"permission_{decision}",
-            target_type="permission",
-            target_id=pr.id,
-            details=decision_note,
+        db().execute(
+            "INSERT INTO qr_scan_logs (request_id, actor_id, result, details, raw_token, scanned_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (request_id, g.current_user.id, "valid", "validated", token[:300], now_iso()),
         )
-    )
+        db().commit()
+        flash("Valid QR. Entry/exit validated and recorded.", "success")
+        return render_template("security_scan.html", pr=dict(pr), token=token)
 
-    student = USERS.get(pr.student_id)
-    if student and student.parent_user_id:
-        msg = (
-            f"Kaveri University: {student.full_name}'s {pr.permission_type.replace('_', ' ')} request "
-            f"({pr.requested_from.strftime('%d %b %Y %I:%M %p')} - {pr.requested_to.strftime('%d %b %Y %I:%M %p')}) "
-            f"to {pr.destination} was {decision.upper()}."
-        )
-        if pr.reason:
-            msg += f" Reason: {pr.reason}."
-        if decision_note:
-            msg += f" Note: {decision_note}."
-        _notify_parent(student, "Permission decision update", msg)
+    def _filters_from_args(prefix: str) -> dict[str, str]:
+        def _get(name: str, default: str = "all") -> str:
+            return request.args.get(name, default).strip()
 
-    flash(f"Request {decision}.", "success")
-    return redirect(url_for("dashboard"))
+        if prefix == "student":
+            return {
+                "perm_status": _get("perm_status", "all"),
+                "perm_type": _get("perm_type", "all"),
+                "permission_search": _get("permission_search", ""),
+                "issue_status": _get("issue_status", "all"),
+                "issue_severity": _get("issue_severity", "all"),
+                "issue_search": _get("issue_search", ""),
+            }
+        if prefix == "admin":
+            return {
+                "perm_status": _get("perm_status", "all"),
+                "perm_type": _get("perm_type", "all"),
+                "perm_student_id": _get("perm_student_id", ""),
+                "permission_search": _get("permission_search", ""),
+                "issue_status": _get("issue_status", "all"),
+                "issue_severity": _get("issue_severity", "all"),
+                "issue_student_id": _get("issue_student_id", ""),
+                "issue_search": _get("issue_search", ""),
+            }
+        if prefix == "parent":
+            return {
+                "student_id": _get("student_id", "all"),
+                "perm_status": _get("perm_status", "all"),
+                "permission_search": _get("permission_search", ""),
+            }
+        return {}
 
+    def _dashboard_student() -> str:
+        filters = _filters_from_args("student")
+        params: list[Any] = [g.current_user.id]
+        where = ["student_id = ?"]
+        if filters["perm_status"] != "all":
+            if filters["perm_status"] == "pending":
+                where.append("status IN ('pending_parent', 'pending_faculty')")
+            else:
+                where.append("status = ?")
+                params.append(filters["perm_status"])
+        if filters["perm_type"] != "all":
+            where.append("permission_type = ?")
+            params.append(filters["perm_type"])
+        if filters["permission_search"]:
+            where.append("(destination LIKE ? OR reason LIKE ?)")
+            q = f"%{filters['permission_search']}%"
+            params.extend([q, q])
 
-@app.route("/issues/<int:issue_id>/status", methods=["POST"])
-@login_required
-def update_issue(issue_id: int):
-    user = current_user()
-    if not user or user.role not in {"faculty", "admin"}:
-        flash("Unauthorized action.", "danger")
-        return redirect(url_for("dashboard"))
+        perm_rows = db().execute(
+            f"""
+            SELECT * FROM permission_requests
+            WHERE {' AND '.join(where)}
+            ORDER BY created_at DESC
+            LIMIT 200
+            """,
+            tuple(params),
+        ).fetchall()
 
-    status = request.form.get("status", "").strip()
-    if status not in {"open", "in_progress", "resolved"}:
-        flash("Invalid status.", "danger")
-        return redirect(url_for("dashboard"))
+        permissions = []
+        for r in perm_rows:
+            r = dict(r)
+            r["requested_from"] = row_to_dt(r["requested_from"])
+            r["requested_to"] = row_to_dt(r["requested_to"])
+            r["created_at"] = row_to_dt(r["created_at"])
+            permissions.append(type("Permission", (), r))
 
-    issue = next((i for i in ISSUES if i.id == issue_id), None)
-    if not issue:
-        flash("Issue not found.", "danger")
-        return redirect(url_for("dashboard"))
+        iparams: list[Any] = [g.current_user.id]
+        iwhere = ["student_id = ?"]
+        if filters["issue_status"] != "all":
+            iwhere.append("status = ?")
+            iparams.append(filters["issue_status"])
+        if filters["issue_severity"] != "all":
+            iwhere.append("severity = ?")
+            iparams.append(filters["issue_severity"])
+        if filters["issue_search"]:
+            iwhere.append("(location LIKE ? OR issue_text LIKE ?)")
+            q = f"%{filters['issue_search']}%"
+            iparams.extend([q, q])
 
-    issue.status = status
-    AUDIT_LOGS.append(
-        AuditLog(
-            id=_next_id("audit"),
-            actor_id=user.id,
-            action="update_issue_status",
-            target_type="issue",
-            target_id=issue.id,
-            details=status,
-        )
-    )
-    flash("Issue status updated.", "success")
-    return redirect(url_for("dashboard"))
+        issue_rows = db().execute(
+            f"""
+            SELECT * FROM issues
+            WHERE {' AND '.join(iwhere)}
+            ORDER BY updated_at DESC
+            LIMIT 200
+            """,
+            tuple(iparams),
+        ).fetchall()
+        issues = []
+        for r in issue_rows:
+            r = dict(r)
+            r["created_at"] = row_to_dt(r["created_at"])
+            r["updated_at"] = row_to_dt(r["updated_at"])
+            issues.append(type("Issue", (), r))
 
-
-@app.route("/notifications/<int:notification_id>/read")
-@login_required
-def read_notification(notification_id: int):
-    user = current_user()
-    n = next((x for x in NOTIFICATIONS if x.id == notification_id), None)
-    if not user or not n or n.recipient_id != user.id:
-        flash("Notification not found.", "danger")
-        return redirect(url_for("dashboard"))
-    n.is_read = True
-    return redirect(url_for("dashboard"))
-
-
-@app.route("/dashboard")
-@login_required
-def dashboard():
-    user = current_user()
-    if not user:
-        return redirect(url_for("login"))
-
-    if user.role in ("student", "day_scholar"):
-        perm_status = request.args.get("perm_status", "all")
-        perm_type = request.args.get("perm_type", "all")
-        permission_search = request.args.get("permission_search", "").strip()
-        issue_status = request.args.get("issue_status", "all")
-        issue_severity = request.args.get("issue_severity", "all")
-        issue_search = request.args.get("issue_search", "").strip()
-
-        permissions = [p for p in PERMISSIONS if p.student_id == user.id]
-        if perm_status != "all":
-            permissions = [p for p in permissions if p.status == perm_status]
-        if perm_type != "all":
-            permissions = [p for p in permissions if p.permission_type == perm_type]
-        if permission_search:
-            s = permission_search.lower()
-            permissions = [
-                p
-                for p in permissions
-                if s in (p.destination or "").lower() or s in (p.reason or "").lower()
-            ]
-        permissions.sort(key=lambda p: p.created_at, reverse=True)
-
-        issues = [i for i in ISSUES if i.student_id == user.id]
-        if issue_status != "all":
-            issues = [i for i in issues if i.status == issue_status]
-        if issue_severity != "all":
-            issues = [i for i in issues if i.severity == issue_severity]
-        if issue_search:
-            s = issue_search.lower()
-            issues = [
-                i
-                for i in issues
-                if s in (i.location or "").lower() or s in (i.issue_text or "").lower()
-            ]
-        issues.sort(key=lambda i: i.created_at, reverse=True)
+        game_bookings: list[Any] = []
+        if g.current_user.role == "student":
+            brow = db().execute(
+                """
+                SELECT b.*, g.name AS game_name, s.slot_date, s.start_time, s.end_time, g.location
+                FROM game_bookings b
+                JOIN game_slots s ON s.id = b.slot_id
+                JOIN indoor_games g ON g.id = s.game_id
+                WHERE b.student_id = ? AND b.status = 'confirmed'
+                  AND (s.slot_date || 'T' || s.end_time) >= ?
+                ORDER BY s.slot_date, s.start_time
+                LIMIT 20
+                """,
+                (g.current_user.id, now_iso()[:16]),
+            ).fetchall()
+            for r in brow:
+                d = dict(r)
+                d["created_at"] = row_to_dt(d["created_at"])
+                game_bookings.append(type("GameBooking", (), d))
 
         return render_template(
             "dashboard_student.html",
             permissions=permissions,
             issues=issues,
-            filters={
-                "perm_status": perm_status,
-                "perm_type": perm_type,
-                "permission_search": permission_search,
-                "issue_status": issue_status,
-                "issue_severity": issue_severity,
-                "issue_search": issue_search,
-            },
+            filters=filters,
+            game_bookings=game_bookings,
+            is_hosteller=g.current_user.role == "student",
         )
 
-    if user.role in ("faculty", "admin"):
-        perm_status = request.args.get("perm_status", "all")
-        perm_type = request.args.get("perm_type", "all")
-        perm_student_id = request.args.get("perm_student_id", "").strip()
-        permission_search = request.args.get("permission_search", "").strip()
-        issue_status = request.args.get("issue_status", "all")
-        issue_severity = request.args.get("issue_severity", "all")
-        issue_student_id = request.args.get("issue_student_id", "").strip()
-        issue_search = request.args.get("issue_search", "").strip()
+    def _dashboard_admin() -> str:
+        filters = _filters_from_args("admin")
 
-        perms: List[PermissionRequest] = list(PERMISSIONS)
-        if perm_status != "all":
-            perms = [p for p in perms if p.status == perm_status]
-        if perm_type != "all":
-            perms = [p for p in perms if p.permission_type == perm_type]
-        if perm_student_id.isdigit():
-            sid = int(perm_student_id)
-            perms = [p for p in perms if p.student_id == sid]
-        if permission_search:
-            s = permission_search.lower()
-            perms = [
-                p
-                for p in perms
-                if s in (p.destination or "").lower()
-                or s in (p.reason or "").lower()
-                or s in (USERS.get(p.student_id).full_name.lower() if USERS.get(p.student_id) else "")
-            ]
-        perms.sort(key=lambda p: p.created_at, reverse=True)
-        permissions: List[Tuple[PermissionRequest, str]] = [
-            (p, USERS.get(p.student_id).full_name if USERS.get(p.student_id) else "Unknown")
-            for p in perms
-        ]
+        perm_stats_rows = db().execute(
+            "SELECT status, COUNT(*) as c FROM permission_requests GROUP BY status"
+        ).fetchall()
+        perm_stats = {str(r["status"]): int(r["c"]) for r in perm_stats_rows}
 
-        issues_raw: List[IssueReport] = list(ISSUES)
-        if issue_status != "all":
-            issues_raw = [i for i in issues_raw if i.status == issue_status]
-        if issue_severity != "all":
-            issues_raw = [i for i in issues_raw if i.severity == issue_severity]
-        if issue_student_id.isdigit():
-            sid = int(issue_student_id)
-            issues_raw = [i for i in issues_raw if i.student_id == sid]
-        if issue_search:
-            s = issue_search.lower()
-            issues_raw = [
-                i
-                for i in issues_raw
-                if s in (i.location or "").lower()
-                or s in (i.issue_text or "").lower()
-                or s in (USERS.get(i.student_id).full_name.lower() if USERS.get(i.student_id) else "")
-            ]
-        issues_raw.sort(key=lambda i: i.created_at, reverse=True)
-        issues: List[Tuple[IssueReport, str]] = [
-            (i, USERS.get(i.student_id).full_name if USERS.get(i.student_id) else "Unknown")
-            for i in issues_raw
-        ]
+        issue_stats_rows = db().execute("SELECT status, COUNT(*) as c FROM issues GROUP BY status").fetchall()
+        issue_stats = {str(r["status"]): int(r["c"]) for r in issue_stats_rows}
 
-        logs = sorted(AUDIT_LOGS, key=lambda x: x.timestamp, reverse=True)[:30]
+        scan_24h = db().execute(
+            "SELECT COUNT(*) as c FROM qr_scan_logs WHERE scanned_at >= ?",
+            ((datetime.utcnow() - timedelta(hours=24)).isoformat(),),
+        ).fetchone()
+        scans_last_24h = int(scan_24h["c"]) if scan_24h else 0
+
+        where = ["1=1"]
+        params: list[Any] = []
+        if filters["perm_status"] != "all":
+            if filters["perm_status"] == "pending":
+                where.append("p.status IN ('pending_parent', 'pending_faculty')")
+            else:
+                where.append("p.status = ?")
+                params.append(filters["perm_status"])
+        if filters["perm_type"] != "all":
+            where.append("p.permission_type = ?")
+            params.append(filters["perm_type"])
+        if filters["perm_student_id"]:
+            where.append("(u.id = ? OR u.login_id LIKE ?)")
+            try:
+                params.append(int(filters["perm_student_id"]))
+            except ValueError:
+                params.append(-1)
+            params.append(f"%{filters['perm_student_id']}%")
+        if filters["permission_search"]:
+            where.append("(p.destination LIKE ? OR p.reason LIKE ?)")
+            q = f"%{filters['permission_search']}%"
+            params.extend([q, q])
+
+        perm_rows = db().execute(
+            f"""
+            SELECT p.*, u.full_name as student_name, u.login_id as student_roll
+            FROM permission_requests p
+            JOIN users u ON u.id = p.student_id
+            WHERE {' AND '.join(where)}
+            ORDER BY p.created_at DESC
+            LIMIT 300
+            """,
+            tuple(params),
+        ).fetchall()
+
+        permissions = []
+        for r in perm_rows:
+            d = dict(r)
+            pr = {
+                k: d[k]
+                for k in (
+                    "id",
+                    "student_id",
+                    "permission_type",
+                    "destination",
+                    "requested_from",
+                    "requested_to",
+                    "reason",
+                    "status",
+                    "decision_note",
+                    "decided_by",
+                    "parent_decision_note",
+                    "parent_decided_by",
+                    "parent_decided_at",
+                    "security_validated_at",
+                    "security_validated_by",
+                    "created_at",
+                )
+            }
+            pr["requested_from"] = row_to_dt(pr["requested_from"])
+            pr["requested_to"] = row_to_dt(pr["requested_to"])
+            pr["created_at"] = row_to_dt(pr["created_at"])
+            permissions.append((type("Permission", (), pr), d["student_name"], d["student_roll"]))
+
+        iwhere = ["1=1"]
+        iparams: list[Any] = []
+        if filters["issue_status"] != "all":
+            iwhere.append("i.status = ?")
+            iparams.append(filters["issue_status"])
+        if filters["issue_severity"] != "all":
+            iwhere.append("i.severity = ?")
+            iparams.append(filters["issue_severity"])
+        if filters["issue_student_id"]:
+            iwhere.append("(u.id = ? OR u.login_id LIKE ?)")
+            try:
+                iparams.append(int(filters["issue_student_id"]))
+            except ValueError:
+                iparams.append(-1)
+            iparams.append(f"%{filters['issue_student_id']}%")
+        if filters["issue_search"]:
+            iwhere.append("(i.location LIKE ? OR i.issue_text LIKE ?)")
+            q = f"%{filters['issue_search']}%"
+            iparams.extend([q, q])
+
+        issue_rows = db().execute(
+            f"""
+            SELECT i.*, u.full_name as student_name, u.login_id as student_roll
+            FROM issues i
+            JOIN users u ON u.id = i.student_id
+            WHERE {' AND '.join(iwhere)}
+            ORDER BY i.updated_at DESC
+            LIMIT 300
+            """,
+            tuple(iparams),
+        ).fetchall()
+        issues = []
+        for r in issue_rows:
+            d = dict(r)
+            issue = {
+                k: d[k]
+                for k in (
+                    "id",
+                    "student_id",
+                    "category",
+                    "severity",
+                    "location",
+                    "issue_text",
+                    "status",
+                    "created_at",
+                    "updated_at",
+                )
+            }
+            issue["created_at"] = row_to_dt(issue["created_at"])
+            issue["updated_at"] = row_to_dt(issue["updated_at"])
+            issues.append((type("Issue", (), issue), d["student_name"], d["student_roll"]))
+
+        log_rows = db().execute(
+            "SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT 30"
+        ).fetchall()
+        logs = []
+        for r in log_rows:
+            d = dict(r)
+            d["timestamp"] = row_to_dt(d["timestamp"])
+            logs.append(type("AuditLog", (), d))
 
         return render_template(
             "dashboard_admin.html",
             permissions=permissions,
             issues=issues,
             logs=logs,
-            filters={
-                "perm_status": perm_status,
-                "perm_type": perm_type,
-                "perm_student_id": perm_student_id,
-                "permission_search": permission_search,
-                "issue_status": issue_status,
-                "issue_severity": issue_severity,
-                "issue_student_id": issue_student_id,
-                "issue_search": issue_search,
-            },
+            filters=filters,
+            perm_stats=perm_stats,
+            issue_stats=issue_stats,
+            scans_last_24h=scans_last_24h,
         )
 
-    if user.role == "parent":
-        linked_students = [u for u in USERS.values() if u.parent_user_id == user.id]
-        student_ids = {s.id for s in linked_students}
-        selected_student_id = request.args.get("student_id", "all")
-        perm_status = request.args.get("perm_status", "all")
-        permission_search = request.args.get("permission_search", "").strip()
+    def _dashboard_parent() -> str:
+        filters = _filters_from_args("parent")
+        linked = db().execute(
+            """
+            SELECT id, login_id, full_name, email, role
+            FROM users
+            WHERE parent_user_id = ?
+            ORDER BY created_at DESC
+            """,
+            (g.current_user.id,),
+        ).fetchall()
+        linked_students = [type("Student", (), dict(r)) for r in linked]
 
-        permissions = [p for p in PERMISSIONS if p.student_id in student_ids]
-        if selected_student_id.isdigit() and int(selected_student_id) in student_ids:
-            sid = int(selected_student_id)
-            permissions = [p for p in permissions if p.student_id == sid]
-        if perm_status != "all":
-            permissions = [p for p in permissions if p.status == perm_status]
-        if permission_search:
-            s = permission_search.lower()
-            permissions = [
-                p
-                for p in permissions
-                if s in (p.destination or "").lower() or s in (p.reason or "").lower()
-            ]
-        permissions.sort(key=lambda p: p.created_at, reverse=True)
+        student_filter = filters["student_id"]
+        where = ["u.parent_user_id = ?"]
+        params: list[Any] = [g.current_user.id]
+        if student_filter != "all":
+            where.append("p.student_id = ?")
+            try:
+                params.append(int(student_filter))
+            except ValueError:
+                params.append(-1)
+        if filters["perm_status"] != "all":
+            if filters["perm_status"] == "pending":
+                where.append("p.status IN ('pending_parent', 'pending_faculty')")
+            else:
+                where.append("p.status = ?")
+                params.append(filters["perm_status"])
+        if filters["permission_search"]:
+            where.append("(p.destination LIKE ? OR p.reason LIKE ?)")
+            q = f"%{filters['permission_search']}%"
+            params.extend([q, q])
 
-        notifications = [n for n in NOTIFICATIONS if n.recipient_id == user.id]
-        notifications.sort(key=lambda n: n.created_at, reverse=True)
+        perm_rows = db().execute(
+            f"""
+            SELECT p.*, u.full_name AS student_name, u.login_id AS student_roll
+            FROM permission_requests p
+            JOIN users u ON u.id = p.student_id
+            WHERE {' AND '.join(where)}
+            ORDER BY p.created_at DESC
+            LIMIT 300
+            """,
+            tuple(params),
+        ).fetchall()
+        permissions = []
+        pending_parent = []
+        for r in perm_rows:
+            d = dict(r)
+            d["requested_from"] = row_to_dt(d["requested_from"])
+            d["requested_to"] = row_to_dt(d["requested_to"])
+            d["created_at"] = row_to_dt(d["created_at"])
+            perm_obj = type("Permission", (), d)
+            permissions.append((perm_obj, d.get("student_name", ""), d.get("student_roll", "")))
+            if d["status"] == "pending_parent":
+                pending_parent.append((perm_obj, d.get("student_name", ""), d.get("student_roll", "")))
+
+        nrows = db().execute(
+            """
+            SELECT * FROM notifications
+            WHERE user_id = ?
+            ORDER BY created_at DESC
+            LIMIT 200
+            """,
+            (g.current_user.id,),
+        ).fetchall()
+        notifications = []
+        for r in nrows:
+            d = dict(r)
+            d["created_at"] = row_to_dt(d["created_at"])
+            d["is_read"] = bool(d["is_read"])
+            notifications.append(type("Notification", (), d))
 
         return render_template(
             "dashboard_parent.html",
             linked_students=linked_students,
             permissions=permissions,
+            pending_parent_requests=pending_parent,
             notifications=notifications,
-            filters={
-                "student_id": selected_student_id,
-                "perm_status": perm_status,
-                "permission_search": permission_search,
-            },
+            filters=filters,
         )
 
-    flash("Invalid role configuration. Contact administrator.", "danger")
-    return redirect(url_for("home"))
+    @app.route("/permission", methods=["GET", "POST"])
+    def request_permission() -> Response | str:
+        gate = require_roles({"student", "day_scholar"})
+        if gate:
+            return gate
+
+        if request.method == "POST":
+            permission_type = request.form.get("permission_type", "").strip()
+            destination = request.form.get("destination", "").strip()
+            requested_from = request.form.get("requested_from", "").strip()
+            requested_to = request.form.get("requested_to", "").strip()
+            reason = request.form.get("reason", "").strip()
+
+            if permission_type not in {
+                "leave_pass",
+                "late_entry",
+                "late_outing",
+                "early_departure",
+                "commute_pass",
+                "day_scholar_update",
+            }:
+                flash("Invalid permission type.", "danger")
+                return render_template("request_permission.html")
+
+            try:
+                dt_from = parse_dt_local(requested_from)
+                dt_to = parse_dt_local(requested_to)
+            except ValueError:
+                flash("Please provide valid From/To date & time.", "warning")
+                return render_template("request_permission.html")
+
+            if dt_to <= dt_from:
+                flash("To time must be after From time.", "warning")
+                return render_template("request_permission.html")
+
+            student = get_user_by_id(g.current_user.id)
+            if not student:
+                flash("Account not found.", "danger")
+                return redirect(url_for("logout"))
+            profile_err = student_profile_ready_for_permission(student)
+            if profile_err:
+                flash(profile_err, "warning")
+                return redirect(url_for("profile"))
+
+            cur = db().execute(
+                """
+                INSERT INTO permission_requests (
+                    student_id, permission_type, destination, requested_from, requested_to,
+                    reason, status, decision_note, decided_by, parent_decision_note,
+                    parent_decided_by, parent_decided_at, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, 'pending_parent', NULL, NULL, NULL, NULL, NULL, ?)
+                """,
+                (
+                    g.current_user.id,
+                    permission_type,
+                    destination,
+                    dt_from.isoformat(),
+                    dt_to.isoformat(),
+                    reason,
+                    now_iso(),
+                ),
+            )
+            db().commit()
+            request_id = int(cur.lastrowid)
+            create_audit(g.current_user.id, "permission_submitted", "permission", request_id, f"type={permission_type}")
+
+            create_notification(
+                int(student["parent_user_id"]),
+                "Approve permission request",
+                f"{student['full_name']} requested {permission_type.replace('_', ' ')} to {destination}. "
+                f"Please review and approve on your Parent Dashboard (Request #{request_id}).",
+            )
+            create_notification(
+                g.current_user.id,
+                "Request sent to parent",
+                f"Your permission request #{request_id} was sent to your parent/guardian for approval first.",
+            )
+
+            flash("Request submitted. Your parent/guardian must approve before faculty review.", "success")
+            return redirect(url_for("permission_receipt", request_id=request_id))
+
+        return render_template("request_permission.html")
+
+    @app.get("/permission/<int:request_id>/receipt")
+    def permission_receipt(request_id: int) -> Response | str:
+        gate = require_login()
+        if gate:
+            return gate
+
+        pr = db().execute("SELECT * FROM permission_requests WHERE id = ?", (request_id,)).fetchone()
+        if not pr:
+            flash("Permission request not found.", "danger")
+            return redirect(url_for("dashboard"))
+
+        prd = dict(pr)
+        prd["requested_from"] = row_to_dt(prd["requested_from"])
+        prd["requested_to"] = row_to_dt(prd["requested_to"])
+        prd["created_at"] = row_to_dt(prd["created_at"])
+        pr_obj = type("Permission", (), prd)
+
+        student = get_user_by_id(int(pr["student_id"]))
+        if g.current_user.role in {"student", "day_scholar"} and int(pr["student_id"]) != g.current_user.id:
+            flash("Access denied.", "danger")
+            return redirect(url_for("dashboard"))
+        if g.current_user.role == "parent":
+            if not student or int(student["parent_user_id"] or 0) != g.current_user.id:
+                flash("Access denied.", "danger")
+                return redirect(url_for("dashboard"))
+
+        student_obj = type("Student", (), dict(student)) if student else None
+        parent = get_user_by_id(int(student["parent_user_id"])) if student and student["parent_user_id"] else None
+        parent_obj = type("Parent", (), dict(parent)) if parent else None
+        receipt_qr_token = make_receipt_qr_token(int(pr["id"]), int(pr["student_id"]), str(pr["status"]))
+        security_qr_token = ""
+        if pr["status"] == "approved":
+            security_qr_token = make_permission_qr_token(int(pr["id"]), str(pr["requested_to"]))
+        return render_template(
+            "receipt_permission.html",
+            pr=pr_obj,
+            student=student_obj,
+            parent=parent_obj,
+            receipt_qr_token=receipt_qr_token,
+            security_qr_token=security_qr_token,
+        )
+
+    @app.get("/permission/<int:request_id>/qr.svg")
+    def permission_qr_svg(request_id: int) -> Response:
+        gate = require_login()
+        if gate:
+            return gate
+
+        pr = db().execute("SELECT * FROM permission_requests WHERE id = ?", (request_id,)).fetchone()
+        if not pr:
+            return Response("Not found", status=404)
+        if pr["status"] != "approved":
+            return Response("QR available only for approved requests.", status=400)
+
+        student = get_user_by_id(int(pr["student_id"]))
+        if g.current_user.role in {"student", "day_scholar"} and int(pr["student_id"]) != g.current_user.id:
+            return Response("Access denied", status=403)
+        if g.current_user.role == "parent":
+            if not student or int(student["parent_user_id"] or 0) != g.current_user.id:
+                return Response("Access denied", status=403)
+
+        token = make_permission_qr_token(int(pr["id"]), str(pr["requested_to"]))
+        return render_qr_svg(token)
+
+    @app.get("/permission/<int:request_id>/qr.png")
+    def permission_qr_png(request_id: int) -> Response:
+        gate = require_login()
+        if gate:
+            return gate
+
+        pr = db().execute("SELECT * FROM permission_requests WHERE id = ?", (request_id,)).fetchone()
+        if not pr or pr["status"] != "approved":
+            return Response("Not found", status=404)
+
+        student = get_user_by_id(int(pr["student_id"]))
+        if g.current_user.role in {"student", "day_scholar"} and int(pr["student_id"]) != g.current_user.id:
+            return Response("Access denied", status=403)
+        if g.current_user.role == "parent":
+            if not student or int(student["parent_user_id"] or 0) != g.current_user.id:
+                return Response("Access denied", status=403)
+
+        token = make_permission_qr_token(int(pr["id"]), str(pr["requested_to"]))
+        return render_qr_png(token)
+
+    @app.get("/permission/<int:request_id>/receipt-qr.svg")
+    def permission_receipt_qr_svg(request_id: int) -> Response:
+        gate = require_login()
+        if gate:
+            return gate
+
+        pr = db().execute("SELECT * FROM permission_requests WHERE id = ?", (request_id,)).fetchone()
+        if not pr:
+            return Response("Not found", status=404)
+
+        student = get_user_by_id(int(pr["student_id"]))
+        if g.current_user.role in {"student", "day_scholar"} and int(pr["student_id"]) != g.current_user.id:
+            return Response("Access denied", status=403)
+        if g.current_user.role == "parent":
+            if not student or int(student["parent_user_id"] or 0) != g.current_user.id:
+                return Response("Access denied", status=403)
+
+        token = make_receipt_qr_token(int(pr["id"]), int(pr["student_id"]), str(pr["status"]))
+        return render_qr_svg(token)
+
+    @app.post("/permission/<int:request_id>/parent-decide")
+    def decide_permission_parent(request_id: int) -> Response:
+        gate = require_roles({"parent"})
+        if gate:
+            return gate
+
+        decision = request.form.get("decision", "").strip()
+        note = request.form.get("decision_note", "").strip()
+        if decision not in {"approved", "rejected"}:
+            flash("Invalid decision.", "danger")
+            return redirect(url_for("dashboard"))
+
+        pr = db().execute("SELECT * FROM permission_requests WHERE id = ?", (request_id,)).fetchone()
+        if not pr:
+            flash("Request not found.", "danger")
+            return redirect(url_for("dashboard"))
+        if pr["status"] != "pending_parent":
+            flash("This request is not awaiting parent approval.", "info")
+            return redirect(url_for("dashboard"))
+
+        student = get_user_by_id(int(pr["student_id"]))
+        if not student or int(student["parent_user_id"] or 0) != g.current_user.id:
+            flash("Access denied.", "danger")
+            return redirect(url_for("dashboard"))
+
+        if decision == "approved":
+            new_status = "pending_faculty"
+            db().execute(
+                """
+                UPDATE permission_requests
+                SET status = ?, parent_decision_note = ?, parent_decided_by = ?, parent_decided_at = ?
+                WHERE id = ?
+                """,
+                (new_status, note or None, g.current_user.id, now_iso(), request_id),
+            )
+            db().commit()
+            create_audit(g.current_user.id, "permission_parent_approved", "permission", request_id, note)
+            create_notification(
+                int(student["id"]),
+                "Parent approved your request",
+                f"Request #{request_id} was approved by your parent. Awaiting faculty approval.",
+            )
+            notify_faculty_pending_permission(
+                request_id,
+                str(student["full_name"]),
+                str(pr["permission_type"]),
+                str(pr["destination"]),
+            )
+            flash("Approved. Request forwarded to faculty for final approval.", "success")
+        else:
+            db().execute(
+                """
+                UPDATE permission_requests
+                SET status = 'rejected', parent_decision_note = ?, parent_decided_by = ?, parent_decided_at = ?
+                WHERE id = ?
+                """,
+                (note or None, g.current_user.id, now_iso(), request_id),
+            )
+            db().commit()
+            create_audit(g.current_user.id, "permission_parent_rejected", "permission", request_id, note)
+            create_notification(
+                int(student["id"]),
+                "Parent rejected your request",
+                f"Request #{request_id} was rejected by your parent. {('Note: ' + note) if note else ''}".strip(),
+            )
+            flash("Request rejected.", "info")
+
+        return redirect(url_for("dashboard"))
+
+    @app.post("/permission/<int:request_id>/decide")
+    def decide_permission(request_id: int) -> Response:
+        gate = require_roles({"admin", "faculty"})
+        if gate:
+            return gate
+
+        decision = request.form.get("decision", "").strip()
+        note = request.form.get("decision_note", "").strip()
+        if decision not in {"approved", "rejected"}:
+            flash("Invalid decision.", "danger")
+            return redirect(url_for("dashboard"))
+
+        pr = db().execute("SELECT * FROM permission_requests WHERE id = ?", (request_id,)).fetchone()
+        if not pr:
+            flash("Request not found.", "danger")
+            return redirect(url_for("dashboard"))
+        if pr["status"] != "pending_faculty":
+            flash("Faculty can act only after parent approval (status: awaiting faculty).", "warning")
+            return redirect(url_for("dashboard"))
+
+        db().execute(
+            """
+            UPDATE permission_requests
+            SET status = ?, decision_note = ?, decided_by = ?
+            WHERE id = ?
+            """,
+            (decision, note or None, g.current_user.id, request_id),
+        )
+        db().commit()
+        create_audit(g.current_user.id, f"permission_{decision}", "permission", request_id, note)
+
+        student = get_user_by_id(int(pr["student_id"]))
+        if student:
+            create_notification(
+                int(student["id"]),
+                f"Permission {decision}",
+                f"Your permission request #{request_id} was {decision} by faculty. {('Note: ' + note) if note else ''}".strip(),
+            )
+            if student["parent_user_id"]:
+                create_notification(
+                    int(student["parent_user_id"]),
+                    f"Ward permission {decision}",
+                    f"{student['full_name']}'s request #{request_id} was {decision} by faculty. {('Note: ' + note) if note else ''}".strip(),
+                )
+
+        flash(f"Request marked as {decision}.", "success")
+        return redirect(url_for("dashboard"))
+
+    @app.route("/issue", methods=["GET", "POST"])
+    def report_issue() -> Response | str:
+        gate = require_roles({"student", "day_scholar"})
+        if gate:
+            return gate
+
+        if request.method == "POST":
+            category = request.form.get("category", "").strip()
+            severity = request.form.get("severity", "").strip()
+            location = request.form.get("location", "").strip()
+            issue_text = request.form.get("issue_text", "").strip()
+
+            if severity not in {"low", "medium", "high"}:
+                flash("Invalid severity.", "danger")
+                return render_template("report_issue.html")
+
+            cur = db().execute(
+                """
+                INSERT INTO issues (
+                    student_id, category, severity, location, issue_text, status, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, 'open', ?, ?)
+                """,
+                (g.current_user.id, category, severity, location, issue_text, now_iso(), now_iso()),
+            )
+            db().commit()
+            issue_id = int(cur.lastrowid)
+            create_audit(g.current_user.id, "issue_reported", "issue", issue_id, f"{category}/{severity}")
+
+            flash("Issue submitted successfully.", "success")
+            return redirect(url_for("dashboard"))
+
+        return render_template("report_issue.html")
+
+    @app.post("/issue/<int:issue_id>/update")
+    def update_issue(issue_id: int) -> Response:
+        gate = require_roles({"admin", "faculty"})
+        if gate:
+            return gate
+
+        status = request.form.get("status", "").strip()
+        if status not in {"open", "in_progress", "resolved"}:
+            flash("Invalid status.", "danger")
+            return redirect(url_for("dashboard"))
+
+        issue = db().execute("SELECT * FROM issues WHERE id = ?", (issue_id,)).fetchone()
+        if not issue:
+            flash("Issue not found.", "danger")
+            return redirect(url_for("dashboard"))
+
+        db().execute("UPDATE issues SET status = ?, updated_at = ? WHERE id = ?", (status, now_iso(), issue_id))
+        db().commit()
+        create_audit(g.current_user.id, "issue_status_updated", "issue", issue_id, f"status={status}")
+
+        student = get_user_by_id(int(issue["student_id"]))
+        if student:
+            create_notification(
+                int(student["id"]),
+                "Issue status updated",
+                f"Your issue #{issue_id} is now '{status.replace('_',' ')}'.",
+            )
+
+        flash("Issue updated.", "success")
+        return redirect(url_for("dashboard"))
+
+    @app.get("/notification/<int:notification_id>/read")
+    def read_notification(notification_id: int) -> Response:
+        gate = require_roles({"parent"})
+        if gate:
+            return gate
+
+        n = db().execute(
+            "SELECT * FROM notifications WHERE id = ? AND user_id = ?",
+            (notification_id, g.current_user.id),
+        ).fetchone()
+        if not n:
+            flash("Notification not found.", "warning")
+            return redirect(url_for("dashboard"))
+
+        db().execute("UPDATE notifications SET is_read = 1 WHERE id = ?", (notification_id,))
+        db().commit()
+        flash("Marked as read.", "success")
+        return redirect(url_for("dashboard"))
+
+    @app.route("/games", methods=["GET", "POST"])
+    def games_book() -> Response | str:
+        gate = require_roles({"student"})
+        if gate:
+            return gate
+
+        filter_date = request.args.get("date", "").strip() or datetime.utcnow().strftime("%Y-%m-%d")
+
+        if request.method == "POST":
+            action = request.form.get("action", "book")
+            if action == "cancel":
+                booking_id = int(request.form.get("booking_id", "0") or 0)
+                booking = db().execute(
+                    "SELECT * FROM game_bookings WHERE id = ? AND student_id = ? AND status = 'confirmed'",
+                    (booking_id, g.current_user.id),
+                ).fetchone()
+                if not booking:
+                    flash("Booking not found.", "danger")
+                    return redirect(url_for("games_book", date=filter_date))
+                db().execute("UPDATE game_bookings SET status = 'cancelled' WHERE id = ?", (booking_id,))
+                db().commit()
+                create_audit(g.current_user.id, "game_booking_cancelled", "game_booking", booking_id, "")
+                flash("Booking cancelled.", "info")
+                return redirect(url_for("games_book", date=filter_date))
+
+            slot_id = int(request.form.get("slot_id", "0") or 0)
+            slot = db().execute(
+                """
+                SELECT s.*, g.name AS game_name, g.is_active AS game_active, g.max_players
+                FROM game_slots s
+                JOIN indoor_games g ON g.id = s.game_id
+                WHERE s.id = ?
+                """,
+                (slot_id,),
+            ).fetchone()
+            if not slot or not slot["is_active"] or not slot["game_active"]:
+                flash("This slot is not available.", "danger")
+                return redirect(url_for("games_book", date=filter_date))
+            if not slot_starts_in_future(str(slot["slot_date"]), str(slot["start_time"])):
+                flash("This slot has already started.", "warning")
+                return redirect(url_for("games_book", date=filter_date))
+            if count_slot_bookings(slot_id) >= int(slot["max_bookings"]):
+                flash("This slot is fully booked.", "warning")
+                return redirect(url_for("games_book", date=filter_date))
+
+            try:
+                cur = db().execute(
+                    """
+                    INSERT INTO game_bookings (slot_id, student_id, status, created_at)
+                    VALUES (?, ?, 'confirmed', ?)
+                    """,
+                    (slot_id, g.current_user.id, now_iso()),
+                )
+                db().commit()
+                booking_id = int(cur.lastrowid)
+                create_audit(g.current_user.id, "game_booking_created", "game_booking", booking_id, slot["game_name"])
+                flash(f"Booked {slot['game_name']} successfully.", "success")
+                return redirect(url_for("game_booking_receipt", booking_id=booking_id))
+            except sqlite3.IntegrityError:
+                flash("You already have a booking for this slot.", "warning")
+                return redirect(url_for("games_book", date=filter_date))
+
+        games = db().execute(
+            "SELECT * FROM indoor_games WHERE is_active = 1 ORDER BY sort_order, name"
+        ).fetchall()
+        slots_by_game: dict[int, list[Any]] = {}
+        for g_row in games:
+            gid = int(g_row["id"])
+            slots = db().execute(
+                """
+                SELECT s.*,
+                    (SELECT COUNT(*) FROM game_bookings b
+                     WHERE b.slot_id = s.id AND b.status = 'confirmed') AS booked_count
+                FROM game_slots s
+                WHERE s.game_id = ? AND s.is_active = 1 AND s.slot_date = ?
+                ORDER BY s.start_time
+                """,
+                (gid, filter_date),
+            ).fetchall()
+            slot_objs = []
+            for s in slots:
+                d = dict(s)
+                d["spots_left"] = max(0, int(d["max_bookings"]) - int(d["booked_count"]))
+                d["is_full"] = d["spots_left"] <= 0
+                d["can_book"] = (
+                    d["spots_left"] > 0
+                    and slot_starts_in_future(str(d["slot_date"]), str(d["start_time"]))
+                )
+                slot_objs.append(type("Slot", (), d))
+            slots_by_game[gid] = slot_objs
+
+        my_bookings_rows = db().execute(
+            """
+            SELECT b.*, g.name AS game_name, s.slot_date, s.start_time, s.end_time, g.location
+            FROM game_bookings b
+            JOIN game_slots s ON s.id = b.slot_id
+            JOIN indoor_games g ON g.id = s.game_id
+            WHERE b.student_id = ? AND b.status = 'confirmed'
+            ORDER BY s.slot_date DESC, s.start_time DESC
+            LIMIT 50
+            """,
+            (g.current_user.id,),
+        ).fetchall()
+        my_bookings = [type("Booking", (), dict(r)) for r in my_bookings_rows]
+
+        return render_template(
+            "games_book.html",
+            games=[type("Game", (), dict(r)) for r in games],
+            slots_by_game=slots_by_game,
+            my_bookings=my_bookings,
+            filter_date=filter_date,
+        )
+
+    @app.get("/games/booking/<int:booking_id>/receipt")
+    def game_booking_receipt(booking_id: int) -> Response | str:
+        gate = require_roles({"student", "admin", "faculty"})
+        if gate:
+            return gate
+
+        row = db().execute(
+            """
+            SELECT b.*, u.full_name, u.login_id, g.name AS game_name, g.location,
+                   s.slot_date, s.start_time, s.end_time
+            FROM game_bookings b
+            JOIN users u ON u.id = b.student_id
+            JOIN game_slots s ON s.id = b.slot_id
+            JOIN indoor_games g ON g.id = s.game_id
+            WHERE b.id = ?
+            """,
+            (booking_id,),
+        ).fetchone()
+        if not row:
+            flash("Booking not found.", "danger")
+            return redirect(url_for("dashboard"))
+
+        if g.current_user.role == "student" and int(row["student_id"]) != g.current_user.id:
+            flash("Access denied.", "danger")
+            return redirect(url_for("dashboard"))
+
+        booking = type("Booking", (), dict(row))
+        qr_token = ""
+        if row["status"] == "confirmed":
+            qr_token = make_game_booking_qr_token(
+                booking_id, slot_end_iso(str(row["slot_date"]), str(row["end_time"]))
+            )
+        return render_template("games_receipt.html", booking=booking, qr_token=qr_token)
+
+    @app.get("/games/booking/<int:booking_id>/qr.svg")
+    def game_booking_qr_svg(booking_id: int) -> Response:
+        gate = require_login()
+        if gate:
+            return gate
+
+        row = db().execute(
+            """
+            SELECT b.*, s.slot_date, s.end_time
+            FROM game_bookings b
+            JOIN game_slots s ON s.id = b.slot_id
+            WHERE b.id = ? AND b.status = 'confirmed'
+            """,
+            (booking_id,),
+        ).fetchone()
+        if not row:
+            return Response("Not found", status=404)
+        if g.current_user.role == "student" and int(row["student_id"]) != g.current_user.id:
+            return Response("Access denied", status=403)
+
+        token = make_game_booking_qr_token(
+            booking_id, slot_end_iso(str(row["slot_date"]), str(row["end_time"]))
+        )
+        return render_qr_svg(token)
+
+    @app.route("/admin/games", methods=["GET", "POST"])
+    def admin_games() -> Response | str:
+        gate = require_roles({"admin"})
+        if gate:
+            return gate
+
+        if request.method == "POST":
+            action = request.form.get("action", "")
+
+            if action == "add_game":
+                name = request.form.get("name", "").strip()
+                description = request.form.get("description", "").strip()
+                location = request.form.get("location", "Recreation Room").strip()
+                max_players = max(1, int(request.form.get("max_players", "2") or 2))
+                if not name:
+                    flash("Game name is required.", "warning")
+                    return redirect(url_for("admin_games"))
+                cur = db().execute(
+                    """
+                    INSERT INTO indoor_games (name, description, location, max_players, is_active, sort_order, created_at)
+                    VALUES (?, ?, ?, ?, 1, 99, ?)
+                    """,
+                    (name, description, location, max_players, now_iso()),
+                )
+                db().commit()
+                create_audit(g.current_user.id, "game_added", "indoor_game", int(cur.lastrowid), name)
+                flash(f"Game '{name}' added.", "success")
+                return redirect(url_for("admin_games"))
+
+            if action == "edit_game":
+                game_id = int(request.form.get("game_id", "0") or 0)
+                name = request.form.get("name", "").strip()
+                description = request.form.get("description", "").strip()
+                location = request.form.get("location", "").strip()
+                max_players = max(1, int(request.form.get("max_players", "2") or 2))
+                is_active = 1 if request.form.get("is_active") == "1" else 0
+                if not name:
+                    flash("Game name is required.", "warning")
+                    return redirect(url_for("admin_games"))
+                db().execute(
+                    """
+                    UPDATE indoor_games
+                    SET name = ?, description = ?, location = ?, max_players = ?, is_active = ?
+                    WHERE id = ?
+                    """,
+                    (name, description, location, max_players, is_active, game_id),
+                )
+                db().commit()
+                create_audit(g.current_user.id, "game_updated", "indoor_game", game_id, name)
+                flash("Game updated.", "success")
+                return redirect(url_for("admin_games"))
+
+            if action == "add_slot":
+                game_id = int(request.form.get("game_id", "0") or 0)
+                slot_date = request.form.get("slot_date", "").strip()
+                start_time = request.form.get("start_time", "").strip()
+                end_time = request.form.get("end_time", "").strip()
+                max_bookings = max(1, int(request.form.get("max_bookings", "1") or 1))
+                notes = request.form.get("notes", "").strip()
+                if not game_id or not slot_date or not start_time or not end_time:
+                    flash("Please fill all slot fields.", "warning")
+                    return redirect(url_for("admin_games"))
+                if start_time >= end_time:
+                    flash("End time must be after start time.", "warning")
+                    return redirect(url_for("admin_games"))
+                cur = db().execute(
+                    """
+                    INSERT INTO game_slots (game_id, slot_date, start_time, end_time, max_bookings, is_active, notes, created_at)
+                    VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+                    """,
+                    (game_id, slot_date, start_time, end_time, max_bookings, notes or None, now_iso()),
+                )
+                db().commit()
+                create_audit(g.current_user.id, "game_slot_added", "game_slot", int(cur.lastrowid), slot_date)
+                flash("Time slot added.", "success")
+                return redirect(url_for("admin_games"))
+
+            if action == "edit_slot":
+                slot_id = int(request.form.get("slot_id", "0") or 0)
+                slot_date = request.form.get("slot_date", "").strip()
+                start_time = request.form.get("start_time", "").strip()
+                end_time = request.form.get("end_time", "").strip()
+                max_bookings = max(1, int(request.form.get("max_bookings", "1") or 1))
+                is_active = 1 if request.form.get("is_active") == "1" else 0
+                notes = request.form.get("notes", "").strip()
+                if start_time >= end_time:
+                    flash("End time must be after start time.", "warning")
+                    return redirect(url_for("admin_games"))
+                db().execute(
+                    """
+                    UPDATE game_slots
+                    SET slot_date = ?, start_time = ?, end_time = ?, max_bookings = ?, is_active = ?, notes = ?
+                    WHERE id = ?
+                    """,
+                    (slot_date, start_time, end_time, max_bookings, is_active, notes or None, slot_id),
+                )
+                db().commit()
+                create_audit(g.current_user.id, "game_slot_updated", "game_slot", slot_id, "")
+                flash("Slot updated.", "success")
+                return redirect(url_for("admin_games"))
+
+            if action == "cancel_booking":
+                booking_id = int(request.form.get("booking_id", "0") or 0)
+                db().execute("UPDATE game_bookings SET status = 'cancelled' WHERE id = ?", (booking_id,))
+                db().commit()
+                create_audit(g.current_user.id, "game_booking_admin_cancel", "game_booking", booking_id, "")
+                flash("Booking cancelled by admin.", "info")
+                return redirect(url_for("admin_games"))
+
+        all_games = db().execute("SELECT * FROM indoor_games ORDER BY sort_order, name").fetchall()
+        games = [type("Game", (), dict(r)) for r in all_games]
+
+        upcoming_slots = db().execute(
+            """
+            SELECT s.*, g.name AS game_name,
+                (SELECT COUNT(*) FROM game_bookings b
+                 WHERE b.slot_id = s.id AND b.status = 'confirmed') AS booked_count
+            FROM game_slots s
+            JOIN indoor_games g ON g.id = s.game_id
+            WHERE s.slot_date >= date('now')
+            ORDER BY s.slot_date, s.start_time
+            LIMIT 100
+            """
+        ).fetchall()
+        slots = []
+        for r in upcoming_slots:
+            d = dict(r)
+            d["booked_count"] = int(d["booked_count"])
+            slots.append(type("Slot", (), d))
+
+        bookings_rows = db().execute(
+            """
+            SELECT b.*, u.full_name, u.login_id, g.name AS game_name,
+                   s.slot_date, s.start_time, s.end_time
+            FROM game_bookings b
+            JOIN users u ON u.id = b.student_id
+            JOIN game_slots s ON s.id = b.slot_id
+            JOIN indoor_games g ON g.id = s.game_id
+            WHERE b.status = 'confirmed' AND s.slot_date >= date('now')
+            ORDER BY s.slot_date, s.start_time
+            LIMIT 80
+            """
+        ).fetchall()
+        bookings = [type("Booking", (), dict(r)) for r in bookings_rows]
+
+        return render_template("admin_games.html", games=games, slots=slots, bookings=bookings)
+
+    return app
+
+
+app = create_app()
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=True, host="127.0.0.1", port=int(os.environ.get("PORT", "5000")))
+

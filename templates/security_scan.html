@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}Security QR Validation | {{ university_name }}{% endblock %}
+{% block content %}
+<section class="panel" style="max-width: 860px; margin: 0 auto;">
+    <h2>Security Desk — QR Validation</h2>
+    <p class="muted">
+        Use the camera scanner or paste the QR token to validate an approved permission request. The system records validation time and logs the scan.
+    </p>
+
+    <div class="grid-2">
+        <div>
+            <h3>Camera Scanner</h3>
+            <p class="muted">Allow camera access and hold the QR code squarely inside the frame.</p>
+            <div id="qr-reader" style="width: 100%; max-width: 360px;"></div>
+            <p id="qr-status" class="muted" style="margin-top: 8px;"></p>
+        </div>
+        <div>
+            <h3>Manual Token Entry</h3>
+            <form id="qr-form" method="post">
+                <label for="qr_token">QR Token</label>
+                <textarea id="qr_token" name="qr_token" rows="4" placeholder="Paste scanned token here" required>{{ token or '' }}</textarea>
+                <button class="btn" type="submit">Validate</button>
+            </form>
+        </div>
+    </div>
+</section>
+
+{% if pr %}
+<section class="panel" style="max-width: 860px; margin: 16px auto 0;">
+    <h3>Request Details</h3>
+    <table>
+        <tbody>
+            <tr><th style="width: 34%;">Request ID</th><td>#{{ pr.id }}</td></tr>
+            <tr><th>Student ID</th><td>{{ pr.student_id }}</td></tr>
+            <tr><th>Type</th><td>{{ pr.permission_type.replace('_', ' ')|title }}</td></tr>
+            <tr><th>Destination</th><td>{{ pr.destination }}</td></tr>
+            <tr><th>Status</th><td><span class="status-pill status-{{ pr.status }}">{{ pr.status }}</span></td></tr>
+            <tr><th>Requested window</th><td>{{ pr.requested_from }} → {{ pr.requested_to }}</td></tr>
+            <tr>
+                <th>Security validation</th>
+                <td>
+                    {% if pr.security_validated_at %}
+                        Validated at {{ pr.security_validated_at }} (by user #{{ pr.security_validated_by or '-' }})
+                    {% else %}
+                        Not yet validated
+                    {% endif %}
+                </td>
+            </tr>
+        </tbody>
+    </table>
+</section>
+{% endif %}
+
+<script src="https://unpkg.com/html5-qrcode@2.3.10/html5-qrcode.min.js" integrity="sha384-1ZV5s1OgwwY8WqBGK2q2pLYb4HB7gpPs3xC4XIdIv4rPsb0Hgmtxu6Uw3I48jWmG" crossorigin="anonymous"></script>
+<script>
+    (function () {
+        const readerElemId = "qr-reader";
+        const form = document.getElementById("qr-form");
+        const tokenField = document.getElementById("qr_token");
+        const statusEl = document.getElementById("qr-status");
+
+        if (!window.Html5Qrcode || !form || !tokenField) {
+            return;
+        }
+
+        const qr = new Html5Qrcode(readerElemId);
+
+        function setStatus(text) {
+            if (statusEl) {
+                statusEl.textContent = text || "";
+            }
+        }
+
+        qr.start(
+            { facingMode: "environment" },
+            { fps: 10, qrbox: { width: 220, height: 220 } },
+            (decodedText) => {
+                tokenField.value = decodedText;
+                setStatus("QR detected. Submitting for validation…");
+                try {
+                    form.submit();
+                } catch (e) {
+                    console.error(e);
+                }
+            },
+            (err) => {
+                // Quietly ignore continuous decode errors.
+            }
+        ).then(() => {
+            setStatus("Camera active. Point QR code at the frame.");
+        }).catch((err) => {
+            console.error(err);
+            setStatus("Unable to start camera scanner. Please use manual entry.");
+        });
+    })();
+</script>
+{% endblock %}

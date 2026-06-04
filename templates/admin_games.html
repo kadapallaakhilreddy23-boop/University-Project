@@ -1,0 +1,199 @@
+{% extends "base.html" %}
+{% block title %}Manage Indoor Games | {{ university_name }}{% endblock %}
+{% block content %}
+<section class="panel panel-elevated">
+    <h2>Indoor Games Management</h2>
+    <p class="muted">Add and edit games, create time slots, and manage hostel student bookings.</p>
+</section>
+
+<section class="panel">
+    <h3>Add New Game</h3>
+    <form method="post" class="grid-2">
+        <input type="hidden" name="action" value="add_game">
+        <div>
+            <label for="name">Game Name</label>
+            <input id="name" name="name" type="text" placeholder="e.g. Chess" required>
+        </div>
+        <div>
+            <label for="location">Location</label>
+            <input id="location" name="location" type="text" value="Recreation Room" required>
+        </div>
+        <div>
+            <label for="max_players">Max Players per Booking</label>
+            <input id="max_players" name="max_players" type="number" min="1" max="20" value="2" required>
+        </div>
+        <div>
+            <label for="description">Description</label>
+            <input id="description" name="description" type="text" placeholder="Optional">
+        </div>
+        <div style="align-self: end;">
+            <button class="btn" type="submit">Add Game</button>
+        </div>
+    </form>
+</section>
+
+<section class="panel">
+    <h3>Edit Games</h3>
+    {% for game in games %}
+    <form method="post" class="admin-game-form panel panel-tight" style="margin-bottom: 14px;">
+        <input type="hidden" name="action" value="edit_game">
+        <input type="hidden" name="game_id" value="{{ game.id }}">
+        <div class="grid-2">
+            <div>
+                <label>Name</label>
+                <input name="name" type="text" value="{{ game.name }}" required>
+            </div>
+            <div>
+                <label>Location</label>
+                <input name="location" type="text" value="{{ game.location }}" required>
+            </div>
+            <div>
+                <label>Max Players</label>
+                <input name="max_players" type="number" min="1" value="{{ game.max_players }}" required>
+            </div>
+            <div>
+                <label>Description</label>
+                <input name="description" type="text" value="{{ game.description or '' }}">
+            </div>
+            <div>
+                <label>
+                    <input type="checkbox" name="is_active" value="1" {% if game.is_active %}checked{% endif %}>
+                    Active (visible to students)
+                </label>
+            </div>
+            <div style="align-self: end;">
+                <button class="btn" type="submit">Save Game</button>
+            </div>
+        </div>
+    </form>
+    {% else %}
+    <p class="muted">No games yet.</p>
+    {% endfor %}
+</section>
+
+<section class="panel">
+    <h3>Add Time Slot</h3>
+    <form method="post" class="grid-2">
+        <input type="hidden" name="action" value="add_slot">
+        <div>
+            <label for="game_id">Game</label>
+            <select id="game_id" name="game_id" required>
+                {% for game in games %}
+                <option value="{{ game.id }}">{{ game.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div>
+            <label for="slot_date">Date</label>
+            <input id="slot_date" name="slot_date" type="date" required>
+        </div>
+        <div>
+            <label for="start_time">Start Time</label>
+            <input id="start_time" name="start_time" type="time" required>
+        </div>
+        <div>
+            <label for="end_time">End Time</label>
+            <input id="end_time" name="end_time" type="time" required>
+        </div>
+        <div>
+            <label for="max_bookings">Max Bookings (capacity)</label>
+            <input id="max_bookings" name="max_bookings" type="number" min="1" value="1" required>
+        </div>
+        <div>
+            <label for="notes">Notes (optional)</label>
+            <input id="notes" name="notes" type="text" placeholder="e.g. Tournament round">
+        </div>
+        <div style="align-self: end;">
+            <button class="btn" type="submit">Add Slot</button>
+        </div>
+    </form>
+</section>
+
+<section class="panel">
+    <h3>Upcoming Slots</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>Game</th>
+                <th>Date</th>
+                <th>Time</th>
+                <th>Booked</th>
+                <th>Status</th>
+                <th>Edit</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for slot in slots %}
+            <tr>
+                <td colspan="6" style="padding: 0; border: none;">
+                    <form method="post" class="slot-edit-row">
+                        <input type="hidden" name="action" value="edit_slot">
+                        <input type="hidden" name="slot_id" value="{{ slot.id }}">
+                        <table style="margin: 0;">
+                            <tr>
+                                <td>{{ slot.game_name }}</td>
+                                <td><input name="slot_date" type="date" value="{{ slot.slot_date }}" required></td>
+                                <td>
+                                    <input name="start_time" type="time" value="{{ slot.start_time }}" required style="width: auto;">
+                                    –
+                                    <input name="end_time" type="time" value="{{ slot.end_time }}" required style="width: auto;">
+                                </td>
+                                <td>{{ slot.booked_count }} / {{ slot.max_bookings }}</td>
+                                <td>
+                                    <label>
+                                        <input type="checkbox" name="is_active" value="1" {% if slot.is_active %}checked{% endif %}> Active
+                                    </label>
+                                </td>
+                                <td>
+                                    <input name="max_bookings" type="number" min="1" value="{{ slot.max_bookings }}" style="width: 60px;">
+                                    <input name="notes" type="text" value="{{ slot.notes or '' }}" placeholder="Notes" style="width: 100px;">
+                                    <button class="btn btn-muted" type="submit">Save</button>
+                                </td>
+                            </tr>
+                        </table>
+                    </form>
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6">No upcoming slots.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+
+<section class="panel">
+    <h3>Confirmed Bookings</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>Student</th>
+                <th>Roll No</th>
+                <th>Game</th>
+                <th>Date</th>
+                <th>Time</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for b in bookings %}
+            <tr>
+                <td>{{ b.full_name }}</td>
+                <td>{{ b.login_id }}</td>
+                <td>{{ b.game_name }}</td>
+                <td>{{ b.slot_date }}</td>
+                <td>{{ b.start_time }} – {{ b.end_time }}</td>
+                <td>
+                    <form method="post" style="display:inline;" onsubmit="return confirm('Cancel this booking?');">
+                        <input type="hidden" name="action" value="cancel_booking">
+                        <input type="hidden" name="booking_id" value="{{ b.id }}">
+                        <button class="btn btn-danger" type="submit">Cancel</button>
+                    </form>
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6">No upcoming bookings.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endblock %}

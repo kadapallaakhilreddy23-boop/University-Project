@@ -3,13 +3,20 @@
 {% block content %}
 <section class="panel" style="max-width: 760px; margin: 0 auto;">
     <h2>Submit Permission Request</h2>
+    <p class="muted">
+        <strong>Approval flow:</strong> Parent/Guardian approves first → Faculty/Admin final approval → QR pass issued.
+        Your profile must include college email, mobile number, and linked parent details.
+        <a href="{{ url_for('profile') }}">Update Profile</a>
+    </p>
     <form method="post">
         <label for="permission_type">Permission Type</label>
         <select id="permission_type" name="permission_type" required>
-            <option value="late_outing">Late-Night Outing</option>
             <option value="leave_pass">Leave Pass</option>
+            <option value="late_entry">Late Entry (Hostel)</option>
+            <option value="late_outing">Late-Night Outing</option>
             <option value="early_departure">Early Departure</option>
             <option value="commute_pass">Day Scholar Commute Permission</option>
+            <option value="day_scholar_update">Day Scholar Update / Movement</option>
         </select>
 
         <label for="destination">Destination</label>
