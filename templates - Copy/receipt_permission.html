@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block title %}Permission Receipt | {{ university_name }}{% endblock %}
+{% block body_class %}page-receipt{% endblock %}
+{% block content %}
+<section class="panel panel-elevated receipt-panel">
+    <div class="receipt-header">
+        <div>
+            <h2>Permission Request Receipt</h2>
+            <p class="muted receipt-meta">
+                Receipt ID: <strong>#{{ pr.id }}</strong> · Submitted: <strong>{{ pr.created_at.strftime('%d %b %Y %I:%M %p') }}</strong>
+            </p>
+        </div>
+        <div class="hero-actions receipt-actions">
+            <button class="btn btn-muted" type="button" onclick="window.print()">Print Receipt</button>
+            <a class="btn" href="{{ url_for('dashboard') }}">Back to Dashboard</a>
+        </div>
+    </div>
+
+    <div class="approval-track panel-tight" style="margin-top: 16px;">
+        <h3>Approval Progress</h3>
+        <ol class="approval-steps">
+            <li class="{% if pr.status == 'pending_parent' %}step-active{% elif pr.status in ['pending_faculty','approved'] %}step-done{% elif pr.status == 'rejected' and pr.parent_decided_at %}step-rejected{% endif %}">
+                <strong>1. Parent / Guardian</strong>
+                {% if pr.parent_decided_at %}
+                    {% if pr.status == 'rejected' and not pr.decided_by %}
+                        — Rejected by parent
+                    {% else %}
+                        — Approved by parent
+                    {% endif %}
+                    {% if pr.parent_decision_note %}<br><span class="muted">{{ pr.parent_decision_note }}</span>{% endif %}
+                {% else %}
+                    — {{ status_label('pending_parent') }}
+                {% endif %}
+            </li>
+            <li class="{% if pr.status == 'pending_faculty' %}step-active{% elif pr.status == 'approved' %}step-done{% elif pr.status == 'rejected' and pr.parent_decided_at and not pr.decided_by %}step-rejected{% endif %}">
+                <strong>2. Faculty / Admin</strong>
+                {% if pr.decided_by %}
+                    — {{ status_label(pr.status) }}
+                    {% if pr.decision_note %}<br><span class="muted">{{ pr.decision_note }}</span>{% endif %}
+                {% elif pr.status == 'pending_faculty' %}
+                    — {{ status_label('pending_faculty') }}
+                {% elif pr.status == 'pending_parent' %}
+                    — Waiting for parent approval first
+                {% else %}
+                    —
+                {% endif %}
+            </li>
+        </ol>
+    </div>
+
+    <div class="grid-2 receipt-details">
+        <div>
+            <h3>Student Details</h3>
+            <table>
+                <tbody>
+                    <tr><th>Name</th><td>{{ student.full_name if student else '—' }}</td></tr>
+                    <tr><th>Roll No</th><td>{{ student.login_id if student else '—' }}</td></tr>
+                    <tr><th>College Email</th><td>{{ student.email if student and student.email else '—' }}</td></tr>
+                    <tr><th>Mobile Number</th><td>{{ student.phone if student and student.phone else '—' }}</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <div>
+            <h3>Parent / Guardian</h3>
+            <table>
+                <tbody>
+                    <tr><th>Parent Name</th><td>{{ parent.full_name if parent else '—' }}</td></tr>
+                    <tr><th>Parent Mobile</th><td>{{ parent.phone if parent and parent.phone else '—' }}</td></tr>
+                    <tr><th>Parent Email</th><td>{{ parent.email if parent and parent.email else '—' }}</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="grid-2 receipt-details">
+        <div>
+            <h3>Request Details</h3>
+            <table>
+                <tbody>
+                    <tr><th>Type</th><td>{{ pr.permission_type.replace('_', ' ')|title }}</td></tr>
+                    <tr><th>Destination</th><td>{{ pr.destination }}</td></tr>
+                    <tr><th>From</th><td>{{ pr.requested_from.strftime('%d %b %Y %I:%M %p') }}</td></tr>
+                    <tr><th>To</th><td>{{ pr.requested_to.strftime('%d %b %Y %I:%M %p') }}</td></tr>
+                    <tr><th>Overall Status</th><td><span class="status-pill status-{{ pr.status }}">{{ status_label(pr.status) }}</span></td></tr>
+                    <tr><th>Reason</th><td>{{ pr.reason or '—' }}</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="qr-receipt-section">
+        <div class="qr-card">
+            <h3>Receipt QR Code</h3>
+            <p class="muted">Scan to verify this official receipt.</p>
+            <div class="qr-frame">
+                <img src="{{ url_for('permission_receipt_qr_svg', request_id=pr.id) }}" alt="Receipt QR #{{ pr.id }}" width="200" height="200">
+            </div>
+        </div>
+
+        <div class="qr-card">
+            <h3>Security Gate QR</h3>
+            {% if pr.status == 'approved' %}
+                <p class="muted">Present at security during your approved window (after parent + faculty approval).</p>
+                <div class="qr-frame qr-frame-primary">
+                    <img src="{{ url_for('permission_qr_svg', request_id=pr.id) }}" alt="Security QR #{{ pr.id }}" width="200" height="200">
+                </div>
+                <div class="qr-downloads">
+                    <a class="btn btn-muted" href="{{ url_for('permission_qr_png', request_id=pr.id) }}" download="permission-{{ pr.id }}-qr.png">Download QR (PNG)</a>
+                </div>
+            {% else %}
+                <p class="muted">Issued only after parent and faculty both approve.</p>
+                <div class="qr-frame qr-frame-disabled">
+                    <span class="qr-placeholder">Not yet approved</span>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <p class="muted receipt-disclaimer">
+        This receipt is an institutional record. Student contact and parent details are mandatory on every submission.
+    </p>
+</section>
+{% endblock %}

@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Game Booking Receipt | {{ university_name }}{% endblock %}
+{% block body_class %}page-receipt{% endblock %}
+{% block content %}
+<section class="panel panel-elevated receipt-panel">
+    <div class="receipt-header">
+        <div>
+            <h2>Indoor Game Booking Receipt</h2>
+            <p class="muted receipt-meta">Booking ID: <strong>#{{ booking.id }}</strong></p>
+        </div>
+        <div class="hero-actions receipt-actions">
+            <button class="btn btn-muted" type="button" onclick="window.print()">Print</button>
+            <a class="btn" href="{{ url_for('games_book') }}">Back to Games</a>
+        </div>
+    </div>
+
+    <div class="grid-2 receipt-details">
+        <div>
+            <h3>Student</h3>
+            <table>
+                <tbody>
+                    <tr><th>Name</th><td>{{ booking.full_name }}</td></tr>
+                    <tr><th>Roll No</th><td>{{ booking.login_id }}</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <div>
+            <h3>Session</h3>
+            <table>
+                <tbody>
+                    <tr><th>Game</th><td>{{ booking.game_name }}</td></tr>
+                    <tr><th>Date</th><td>{{ booking.slot_date }}</td></tr>
+                    <tr><th>Time</th><td>{{ booking.start_time }} – {{ booking.end_time }}</td></tr>
+                    <tr><th>Location</th><td>{{ booking.location }}</td></tr>
+                    <tr><th>Status</th><td><span class="status-pill status-{{ booking.status }}">{{ booking.status }}</span></td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    {% if booking.status == 'confirmed' %}
+    <div class="qr-receipt-section qr-receipt-single">
+        <div class="qr-card">
+            <h3>Entry QR Code</h3>
+            <p class="muted">Show this QR at the recreation room desk when your slot begins.</p>
+            <div class="qr-frame qr-frame-primary">
+                <img src="{{ url_for('game_booking_qr_svg', booking_id=booking.id) }}" alt="Game booking QR" width="220" height="220">
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</section>
+{% endblock %}

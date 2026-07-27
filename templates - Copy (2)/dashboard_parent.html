@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+{% block title %}Parent Dashboard | {{ university_name }}{% endblock %}
+{% block content %}
+<section class="panel">
+    <h2>Parent / Guardian Dashboard</h2>
+    <p>Approve your ward's permission requests first — faculty will review only after your approval.</p>
+</section>
+
+{% if pending_parent_requests %}
+<section class="panel panel-elevated">
+    <h3>Action Required — Approve Requests</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>Student</th>
+                <th>Roll No</th>
+                <th>Type</th>
+                <th>Destination</th>
+                <th>Timeline</th>
+                <th>Reason</th>
+                <th>Decision</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for p, student_name, student_roll in pending_parent_requests %}
+            <tr>
+                <td>{{ student_name }}</td>
+                <td>{{ student_roll }}</td>
+                <td>{{ p.permission_type.replace('_', ' ')|title }}</td>
+                <td>{{ p.destination }}</td>
+                <td>{{ p.requested_from.strftime('%d %b %Y %I:%M %p') }} – {{ p.requested_to.strftime('%d %b %Y %I:%M %p') }}</td>
+                <td>{{ p.reason }}</td>
+                <td>
+                    <form method="post" action="{{ url_for('decide_permission_parent', request_id=p.id) }}">
+                        <input type="text" name="decision_note" placeholder="Note (optional)">
+                        <button class="btn" type="submit" name="decision" value="approved">Approve</button>
+                        <button class="btn btn-danger" type="submit" name="decision" value="rejected">Reject</button>
+                    </form>
+                    <a class="btn btn-muted" href="{{ url_for('permission_receipt', request_id=p.id) }}">View Receipt</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endif %}
+
+<section class="panel">
+    <h3>Linked Students</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Roll Number</th>
+                <th>Role</th>
+                <th>Email</th>
+                <th>Phone</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for student in linked_students %}
+            <tr>
+                <td>{{ student.full_name }}</td>
+                <td>{{ student.login_id }}</td>
+                <td>{{ student.role.replace('_', ' ')|title }}</td>
+                <td>{{ student.email or '—' }}</td>
+                <td>{{ student.phone or '—' }}</td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="5">No students linked to this parent account.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+
+<section class="panel">
+    <h3>All Permission Updates</h3>
+    <form method="get" class="grid-2">
+        <div>
+            <label for="student_id">Student</label>
+            <select id="student_id" name="student_id">
+                <option value="all" {% if filters.student_id == 'all' %}selected{% endif %}>All Linked Students</option>
+                {% for student in linked_students %}
+                    <option value="{{ student.id }}" {% if filters.student_id == (student.id|string) %}selected{% endif %}>
+                        {{ student.full_name }} ({{ student.login_id }})
+                    </option>
+                {% endfor %}
+            </select>
+        </div>
+        <div>
+            <label for="perm_status">Status</label>
+            <select id="perm_status" name="perm_status">
+                <option value="all" {% if filters.perm_status == 'all' %}selected{% endif %}>All</option>
+                <option value="pending_parent" {% if filters.perm_status == 'pending_parent' %}selected{% endif %}>Awaiting Parent</option>
+                <option value="pending_faculty" {% if filters.perm_status == 'pending_faculty' %}selected{% endif %}>Awaiting Faculty</option>
+                <option value="pending" {% if filters.perm_status == 'pending' %}selected{% endif %}>Any Pending</option>
+                <option value="approved" {% if filters.perm_status == 'approved' %}selected{% endif %}>Approved</option>
+                <option value="rejected" {% if filters.perm_status == 'rejected' %}selected{% endif %}>Rejected</option>
+            </select>
+        </div>
+        <div>
+            <label for="permission_search">Search</label>
+            <input id="permission_search" name="permission_search" type="text" value="{{ filters.permission_search }}" placeholder="Destination or reason">
+        </div>
+        <div style="align-self: end;">
+            <button class="btn" type="submit">Apply Filters</button>
+            <a class="btn btn-muted" href="{{ url_for('dashboard') }}">Reset</a>
+        </div>
+    </form>
+    <table>
+        <thead>
+            <tr>
+                <th>Student</th>
+                <th>Roll No</th>
+                <th>Type</th>
+                <th>Destination</th>
+                <th>Status</th>
+                <th>Receipt</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for p, student_name, student_roll in permissions %}
+            <tr>
+                <td>{{ student_name }}</td>
+                <td>{{ student_roll }}</td>
+                <td>{{ p.permission_type.replace('_', ' ')|title }}</td>
+                <td>{{ p.destination }}</td>
+                <td><span class="status-pill status-{{ p.status }}">{{ status_label(p.status) }}</span></td>
+                <td><a class="btn btn-muted" href="{{ url_for('permission_receipt', request_id=p.id) }}">View</a></td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="6">No updates available.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+
+<section class="panel">
+    <h3>Notifications</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>Title</th>
+                <th>Message</th>
+                <th>Time</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for n in notifications %}
+            <tr>
+                <td>{{ n.title }}</td>
+                <td>{{ n.message }}</td>
+                <td>{{ n.created_at.strftime('%d %b %Y %I:%M %p') }}</td>
+                <td>
+                    {% if n.is_read %}
+                        Read
+                    {% else %}
+                        <a class="btn btn-muted" href="{{ url_for('read_notification', notification_id=n.id) }}">Mark as Read</a>
+                    {% endif %}
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="4">No notifications yet.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endblock %}

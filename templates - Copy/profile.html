@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}My Profile | {{ university_name }}{% endblock %}
+{% block content %}
+<section class="panel" style="max-width: 860px; margin: 0 auto;">
+    <h2>My Profile</h2>
+    <p class="muted">Maintain your official contact information. This phone number is used for OTP verification and parent notifications.</p>
+
+    <form method="post" class="grid-2">
+        <div>
+            <label for="login_id">Login ID</label>
+            <input id="login_id" type="text" value="{{ user.login_id }}" readonly>
+        </div>
+        <div>
+            <label for="role">Role</label>
+            <input id="role" type="text" value="{{ user.role.replace('_',' ')|title }}" readonly>
+        </div>
+        <div>
+            <label for="full_name">Full Name</label>
+            <input id="full_name" name="full_name" type="text" required value="{{ user.full_name }}">
+        </div>
+        <div>
+            <label for="email">Email</label>
+            <input id="email" name="email" type="email" value="{{ user.email or '' }}">
+        </div>
+        <div>
+            <label for="phone">Phone / WhatsApp Number</label>
+            <input id="phone" name="phone" type="text" value="{{ user.phone or '' }}">
+        </div>
+        <div style="align-self: end;">
+            <button class="btn" type="submit">Save Profile</button>
+        </div>
+    </form>
+</section>
+
+<section class="panel" style="max-width: 860px; margin: 16px auto 0;">
+    <h3>Change Password</h3>
+    <form method="post" action="{{ url_for('profile_change_password') }}" class="grid-2">
+        <div>
+            <label for="current_password">Current Password</label>
+            <input id="current_password" name="current_password" type="password" required>
+        </div>
+        <div></div>
+        <div>
+            <label for="new_password">New Password</label>
+            <input id="new_password" name="new_password" type="password" minlength="8" required>
+        </div>
+        <div>
+            <label for="confirm_password">Confirm Password</label>
+            <input id="confirm_password" name="confirm_password" type="password" minlength="8" required>
+        </div>
+        <div style="align-self: end;">
+            <button class="btn" type="submit">Update Password</button>
+        </div>
+    </form>
+</section>
+{% endblock %}

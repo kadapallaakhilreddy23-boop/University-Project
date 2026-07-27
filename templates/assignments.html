@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+{% block title %}Assignments | {{ university_name }}{% endblock %}
+{% block content %}
+<section class="panel">
+    <h2>📝 Assignments</h2>
+    <p>Track your homework, submit assignments, and view due dates.</p>
+
+    {% if g.current_user and g.current_user.role == 'faculty' %}
+    <div class="panel" style="margin-top: 20px; background: linear-gradient(180deg, #fef2f2, #fff);">
+        <h3>Create New Assignment</h3>
+        <form method="post">
+            <input type="hidden" name="action" value="add">
+            <div class="grid-2">
+                <div>
+                    <label for="title">Title</label>
+                    <input id="title" name="title" type="text" required placeholder="Assignment title">
+                </div>
+                <div>
+                    <label for="subject">Subject</label>
+                    <input id="subject" name="subject" type="text" required placeholder="Subject name">
+                </div>
+            </div>
+            <div class="grid-2">
+                <div>
+                    <label for="due_date">Due Date</label>
+                    <input id="due_date" name="due_date" type="date" required>
+                </div>
+                <div>
+                    <label for="total_marks">Total Marks</label>
+                    <input id="total_marks" name="total_marks" type="number" value="100" min="1">
+                </div>
+            </div>
+            <div>
+                <label for="description">Description</label>
+                <textarea id="description" name="description" rows="4" required placeholder="Assignment instructions..."></textarea>
+            </div>
+            <button class="btn" type="submit">Create Assignment</button>
+        </form>
+    </div>
+    {% endif %}
+</section>
+
+<section class="panel">
+    <h3>All Assignments</h3>
+    {% if assignments %}
+    <div class="assignments-list">
+        {% for assign in assignments %}
+        <div class="assignment-card">
+            <div class="assignment-header">
+                <h4>{{ assign.title }}</h4>
+                <span class="subject-badge">{{ assign.subject }}</span>
+            </div>
+            <div class="assignment-meta">
+                <span class="due-date">📅 Due: {{ assign.due_date }}</span>
+                <span class="marks">📊 {{ assign.total_marks }} marks</span>
+                {% if assign.created_by_name %}
+                <span class="author">by {{ assign.created_by_name }}</span>
+                {% endif %}
+            </div>
+            <p class="assignment-description">{{ assign.description }}</p>
+            
+            {% if g.current_user and g.current_user.role in ['student', 'day_scholar'] %}
+            {% set submission = submissions.get(assign.id) %}
+            {% if submission %}
+            <div class="submission-status submitted">
+                <span>✅ Submitted on {{ submission.submitted_at[:10] }}</span>
+                {% if submission.marks_obtained %}
+                <span class="grade">Grade: {{ submission.marks_obtained }}/{{ assign.total_marks }}</span>
+                {% endif %}
+                {% if submission.feedback %}
+                <p class="feedback">📝 {{ submission.feedback }}</p>
+                {% endif %}
+            </div>
+            {% else %}
+            <form method="post" action="{{ url_for('submit_assignment', assignment_id=assign.id) }}" class="submission-form">
+                <label for="submission_text_{{ assign.id }}">Your Submission</label>
+                <textarea id="submission_text_{{ assign.id }}" name="submission_text" rows="3" placeholder="Write your submission here..."></textarea>
+                <button class="btn" type="submit">Submit Assignment</button>
+            </form>
+            {% endif %}
+            {% endif %}
+            
+            {% if g.current_user and g.current_user.role == 'faculty' %}
+            <form method="post" style="margin-top: 12px;">
+                <input type="hidden" name="action" value="delete">
+                <input type="hidden" name="assignment_id" value="{{ assign.id }}">
+                <button class="btn btn-danger" type="submit" style="padding: 6px 12px; font-size: 0.8rem;">Delete</button>
+            </form>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p class="muted">No assignments posted yet.</p>
+    {% endif %}
+</section>
+
+<style>
+.assignments-list {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.assignment-card {
+    background: var(--bg-card-alt);
+    border-radius: var(--radius);
+    padding: 20px;
+    border: 2px solid var(--border);
+}
+
+.assignment-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.assignment-header h4 {
+    margin: 0;
+    color: var(--ku-navy);
+    font-size: 1.1rem;
+}
+
+.subject-badge {
+    background: var(--accent-purple);
+    color: #fff;
+    padding: 4px 12px;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 800;
+}
+
+.assignment-meta {
+    display: flex;
+    gap: 16px;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+}
+
+.assignment-description {
+    margin: 0 0 12px;
+    line-height: 1.6;
+    color: var(--text-body);
+}
+
+.submission-status {
+    padding: 10px 14px;
+    border-radius: 8px;
+    margin-top: 12px;
+}
+
+.submission-status.submitted {
+    background: #d1fae5;
+    color: #047857;
+}
+
+.grade {
+    background: #fff;
+    padding: 2px 8px;
+    border-radius: 6px;
+    margin-left: 8px;
+    font-weight: 800;
+}
+
+.feedback {
+    margin: 8px 0 0;
+    font-style: italic;
+    font-size: 0.9rem;
+}
+
+.submission-form {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 2px solid var(--border);
+}
+</style>
+{% endblock %}

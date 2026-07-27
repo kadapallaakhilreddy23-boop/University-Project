@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% block title %}Announcements | {{ university_name }}{% endblock %}
+{% block content %}
+<section class="panel">
+    <h2>📢 Class Announcements</h2>
+    <p>Stay updated with the latest class news, notices, and important information.</p>
+
+    {% if g.current_user and g.current_user.role == 'admin' %}
+    <div class="panel" style="margin-top: 20px; background: linear-gradient(180deg, #eff6ff, #fff);">
+        <h3>Post New Announcement</h3>
+        <form method="post">
+            <input type="hidden" name="action" value="add">
+            <div class="grid-2">
+                <div>
+                    <label for="title">Title</label>
+                    <input id="title" name="title" type="text" required placeholder="Announcement title">
+                </div>
+                <div>
+                    <label for="category">Category</label>
+                    <select id="category" name="category">
+                        <option value="general">General</option>
+                        <option value="academic">Academic</option>
+                        <option value="exam">Exam</option>
+                        <option value="event">Event</option>
+                        <option value="urgent">Urgent</option>
+                    </select>
+                </div>
+            </div>
+            <div class="grid-2">
+                <div>
+                    <label for="priority">Priority</label>
+                    <select id="priority" name="priority">
+                        <option value="low">Low</option>
+                        <option value="normal" selected>Normal</option>
+                        <option value="high">High</option>
+                        <option value="urgent">Urgent</option>
+                    </select>
+                </div>
+            </div>
+            <div>
+                <label for="content">Content</label>
+                <textarea id="content" name="content" rows="4" required placeholder="Announcement details..."></textarea>
+            </div>
+            <button class="btn" type="submit">Post Announcement</button>
+        </form>
+    </div>
+    {% endif %}
+</section>
+
+<section class="panel">
+    <h3>All Announcements</h3>
+    {% if announcements %}
+    <div class="announcements-list">
+        {% for ann in announcements %}
+        <div class="announcement-card" style="border-left: 4px solid {% if ann.priority == 'urgent' %}#dc2626{% elif ann.priority == 'high' %}#f59e0b{% elif ann.priority == 'low' %}#64748b{% else %}#3b82f6{% endif %};">
+            <div class="announcement-header">
+                <h4>{{ ann.title }}</h4>
+                <span class="priority-badge priority-{{ ann.priority }}">{{ ann.priority|title }}</span>
+            </div>
+            <p class="announcement-meta">
+                <span class="category-tag">{{ ann.category|title }}</span>
+                <span class="date">{{ ann.created_at[:10] }}</span>
+                {% if ann.created_by_name %}
+                <span class="author">by {{ ann.created_by_name }}</span>
+                {% endif %}
+            </p>
+            <p class="announcement-content">{{ ann.content }}</p>
+            {% if g.current_user and g.current_user.role == 'admin' %}
+            <form method="post" style="margin-top: 12px;">
+                <input type="hidden" name="action" value="delete">
+                <input type="hidden" name="announcement_id" value="{{ ann.id }}">
+                <button class="btn btn-danger" type="submit" style="padding: 6px 12px; font-size: 0.8rem;">Delete</button>
+            </form>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p class="muted">No announcements yet.</p>
+    {% endif %}
+</section>
+
+<style>
+.announcements-list {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.announcement-card {
+    background: var(--bg-card-alt);
+    border-radius: var(--radius);
+    padding: 20px;
+    border: 2px solid var(--border);
+}
+
+.announcement-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.announcement-header h4 {
+    margin: 0;
+    color: var(--ku-navy);
+    font-size: 1.1rem;
+}
+
+.priority-badge {
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    font-weight: 800;
+    text-transform: uppercase;
+}
+
+.priority-urgent { background: #fee2e2; color: #dc2626; }
+.priority-high { background: #fef3c7; color: #d97706; }
+.priority-normal { background: #dbeafe; color: #2563eb; }
+.priority-low { background: #f1f5f9; color: #64748b; }
+
+.announcement-meta {
+    display: flex;
+    gap: 12px;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+}
+
+.category-tag {
+    background: var(--ku-navy-mid);
+    color: #fff;
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 0.75rem;
+}
+
+.announcement-content {
+    margin: 0;
+    line-height: 1.6;
+    color: var(--text-body);
+}
+</style>
+{% endblock %}

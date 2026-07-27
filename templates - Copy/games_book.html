@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}Indoor Games Booking | {{ university_name }}{% endblock %}
+{% block content %}
+<section class="panel panel-elevated">
+    <h2>Indoor Games — Slot Booking</h2>
+    <p class="muted">Book recreation room slots for chess, carrom, and other indoor games. Hostel students only.</p>
+
+    <form method="get" class="games-date-filter">
+        <label for="date">Select date</label>
+        <input id="date" name="date" type="date" value="{{ filter_date }}" required>
+        <button class="btn" type="submit">Show Slots</button>
+    </form>
+</section>
+
+{% for game in games %}
+<section class="panel">
+    <div class="game-header">
+        <h3>{{ game.name }}</h3>
+        <span class="muted">{{ game.location }}</span>
+    </div>
+    {% if game.description %}
+    <p class="muted">{{ game.description }}</p>
+    {% endif %}
+
+    {% set slots = slots_by_game.get(game.id, []) %}
+    {% if slots %}
+    <div class="slot-grid">
+        {% for slot in slots %}
+        <div class="slot-card {% if slot.is_full %}slot-full{% endif %}">
+            <div class="slot-time">{{ slot.start_time }} – {{ slot.end_time }}</div>
+            <div class="slot-meta">
+                {% if slot.is_full %}
+                    <span class="status-pill status-rejected">Full</span>
+                {% else %}
+                    <span class="status-pill status-approved">{{ slot.spots_left }} spot(s) left</span>
+                {% endif %}
+            </div>
+            {% if slot.notes %}<p class="muted slot-note">{{ slot.notes }}</p>{% endif %}
+            {% if slot.can_book %}
+            <form method="post">
+                <input type="hidden" name="action" value="book">
+                <input type="hidden" name="slot_id" value="{{ slot.id }}">
+                <button class="btn" type="submit">Book Slot</button>
+            </form>
+            {% elif not slot.is_full %}
+            <p class="muted">Slot started</p>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p class="muted">No slots available on this date. Check another date or contact admin.</p>
+    {% endif %}
+</section>
+{% else %}
+<section class="panel">
+    <p class="muted">No games configured yet. Admin can add games from Indoor Games Management.</p>
+</section>
+{% endfor %}
+
+<section class="panel">
+    <h3>My Bookings</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>Game</th>
+                <th>Date</th>
+                <th>Time</th>
+                <th>Location</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for b in my_bookings %}
+            <tr>
+                <td>{{ b.game_name }}</td>
+                <td>{{ b.slot_date }}</td>
+                <td>{{ b.start_time }} – {{ b.end_time }}</td>
+                <td>{{ b.location }}</td>
+                <td>
+                    <a class="btn btn-muted" href="{{ url_for('game_booking_receipt', booking_id=b.id) }}">Receipt &amp; QR</a>
+                    <form method="post" style="display:inline;" onsubmit="return confirm('Cancel this booking?');">
+                        <input type="hidden" name="action" value="cancel">
+                        <input type="hidden" name="booking_id" value="{{ b.id }}">
+                        <button class="btn btn-danger" type="submit">Cancel</button>
+                    </form>
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5">No active bookings.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endblock %}

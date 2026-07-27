@@ -1,9 +1,6 @@
 import os
 import secrets
 import sqlite3
-import io
-import random
-import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 import base64
@@ -12,7 +9,6 @@ import hmac
 import json
 from pathlib import Path
 from typing import Any, Optional
-from functools import wraps
 
 from flask import (
     Flask,
@@ -33,40 +29,6 @@ APP_DIR = Path(__file__).resolve().parent
 DB_PATH = APP_DIR / "app.db"
 ASSETS_DIR = APP_DIR / "assets"
 
-# Rate limiting for login storm protection
-LOGIN_ATTEMPTS = {}  # IP -> list of timestamps
-MAX_LOGIN_ATTEMPTS_PER_MINUTE = 10
-
-
-def check_rate_limit(ip: str) -> bool:
-    """Check if IP has exceeded rate limit. Returns True if allowed, False if rate limited."""
-    now = time.time()
-    if ip not in LOGIN_ATTEMPTS:
-        LOGIN_ATTEMPTS[ip] = []
-    
-    # Remove attempts older than 1 minute
-    LOGIN_ATTEMPTS[ip] = [t for t in LOGIN_ATTEMPTS[ip] if now - t < 60]
-    
-    # Check if exceeded limit
-    if len(LOGIN_ATTEMPTS[ip]) >= MAX_LOGIN_ATTEMPTS_PER_MINUTE:
-        return False
-    
-    # Add this attempt
-    LOGIN_ATTEMPTS[ip].append(now)
-    return True
-
-
-def rate_limit_decorator(f):
-    """Decorator to apply rate limiting to login routes."""
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        ip = request.remote_addr or "unknown"
-        if not check_rate_limit(ip):
-            flash("Too many login attempts. Please wait a minute.", "warning")
-            return redirect(request.url)
-        return f(*args, **kwargs)
-    return decorated_function
-
 
 def create_app() -> Flask:
     app = Flask(__name__)
@@ -77,36 +39,14 @@ def create_app() -> Flask:
         MOTTO=os.environ.get("UNIVERSITY_MOTTO", "Shaping the new"),
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
-        SESSION_COOKIE_PERMANENT=True,
-        PERMANENT_SESSION_LIFETIME=timedelta(days=30),
     )
 
     def db() -> sqlite3.Connection:
-        """Database connection - SQLite optimized for 1000+ users with WAL mode and error handling."""
         if "db" not in g:
-            max_retries = 3
-            retry_delay = 0.5
-            
-            for attempt in range(max_retries):
-                try:
-                    conn = sqlite3.connect(DB_PATH, timeout=30)
-                    conn.row_factory = sqlite3.Row
-                    # Enable WAL mode for better concurrency (supports 1000+ users)
-                    conn.execute("PRAGMA journal_mode=WAL;")
-                    conn.execute("PRAGMA foreign_keys = ON;")
-                    conn.execute("PRAGMA synchronous=NORMAL;")
-                    conn.execute("PRAGMA cache_size=-64000;")  # 64MB cache
-                    g.db = conn
-                    return g.db
-                except sqlite3.OperationalError as e:
-                    if attempt < max_retries - 1:
-                        time.sleep(retry_delay)
-                        retry_delay *= 2  # Exponential backoff
-                    else:
-                        # Log error and return None (graceful degradation)
-                        print(f"Database connection failed after {max_retries} attempts: {e}")
-                        g.db = None
-                        return None
+            conn = sqlite3.connect(DB_PATH)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA foreign_keys = ON;")
+            g.db = conn
         return g.db
 
     @app.teardown_appcontext
@@ -114,18 +54,6 @@ def create_app() -> Flask:
         conn = g.pop("db", None)
         if conn is not None:
             conn.close()
-
-    @app.errorhandler(sqlite3.OperationalError)
-    def handle_db_error(e):
-        """Handle database errors gracefully - show friendly message instead of crashing."""
-        flash("System is under heavy load. Please try again in a moment.", "warning")
-        return redirect(url_for("home"))
-
-    @app.errorhandler(500)
-    def handle_server_error(e):
-        """Handle server errors gracefully."""
-        flash("An unexpected error occurred. Please try again.", "danger")
-        return redirect(url_for("home"))
 
     def _tables_referencing_users_old(conn: sqlite3.Connection) -> list[str]:
         rows = conn.execute(
@@ -234,7 +162,6 @@ def create_app() -> Flask:
                 role TEXT NOT NULL CHECK(role IN ('student','day_scholar','parent','faculty','admin','security')),
                 password_hash TEXT NOT NULL,
                 parent_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-                mentor_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
                 created_at TEXT NOT NULL
             );
 
@@ -328,90 +255,6 @@ def create_app() -> Flask:
                 status TEXT NOT NULL CHECK(status IN ('confirmed','cancelled')),
                 created_at TEXT NOT NULL,
                 UNIQUE(slot_id, student_id)
-            );
-
-            CREATE TABLE IF NOT EXISTS announcements (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                title TEXT NOT NULL,
-                content TEXT NOT NULL,
-                category TEXT NOT NULL DEFAULT 'general',
-                priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('low','normal','high','urgent')),
-                created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-                created_at TEXT NOT NULL,
-                is_active INTEGER NOT NULL DEFAULT 1
-            );
-
-            CREATE TABLE IF NOT EXISTS class_schedules (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                day_of_week TEXT NOT NULL,
-                subject TEXT NOT NULL,
-                teacher TEXT NOT NULL,
-                room TEXT NOT NULL,
-                start_time TEXT NOT NULL,
-                end_time TEXT NOT NULL,
-                class_name TEXT NOT NULL DEFAULT 'Class A',
-                is_active INTEGER NOT NULL DEFAULT 1,
-                created_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS assignments (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                title TEXT NOT NULL,
-                description TEXT NOT NULL,
-                subject TEXT NOT NULL,
-                due_date TEXT NOT NULL,
-                total_marks INTEGER DEFAULT 100,
-                created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-                created_at TEXT NOT NULL,
-                is_active INTEGER NOT NULL DEFAULT 1
-            );
-
-            CREATE TABLE IF NOT EXISTS assignment_submissions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                assignment_id INTEGER NOT NULL REFERENCES assignments(id) ON DELETE CASCADE,
-                student_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                submission_text TEXT,
-                submission_file TEXT,
-                marks_obtained INTEGER,
-                submitted_at TEXT,
-                graded_at TEXT,
-                graded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-                feedback TEXT,
-                UNIQUE(assignment_id, student_id)
-            );
-
-            CREATE TABLE IF NOT EXISTS class_resources (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                title TEXT NOT NULL,
-                description TEXT,
-                file_path TEXT,
-                file_name TEXT,
-                resource_type TEXT NOT NULL DEFAULT 'document' CHECK(resource_type IN ('document','video','link','other')),
-                subject TEXT NOT NULL,
-                uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-                created_at TEXT NOT NULL,
-                is_active INTEGER NOT NULL DEFAULT 1
-            );
-
-            CREATE TABLE IF NOT EXISTS class_events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                title TEXT NOT NULL,
-                description TEXT,
-                event_date TEXT NOT NULL,
-                event_time TEXT,
-                location TEXT,
-                event_type TEXT NOT NULL DEFAULT 'general' CHECK(event_type IN ('general','exam','holiday','activity','meeting','other')),
-                created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-                created_at TEXT NOT NULL,
-                is_active INTEGER NOT NULL DEFAULT 1
-            );
-
-            CREATE TABLE IF NOT EXISTS login_otps (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                otp TEXT NOT NULL,
-                expires_at TEXT NOT NULL,
-                created_at TEXT NOT NULL
             );
             """
         )
@@ -580,54 +423,6 @@ def create_app() -> Flask:
         # Repair any DB that still references users_old (e.g. partial migration).
         _repair_users_old_foreign_keys(conn)
 
-        # Migration: add mentor_id column if DB existed before.
-        try:
-            cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
-            if "mentor_id" not in cols:
-                conn.execute("ALTER TABLE users ADD COLUMN mentor_id INTEGER REFERENCES users(id) ON DELETE SET NULL")
-                conn.commit()
-        except sqlite3.OperationalError:
-            pass
-
-        # Migration: fix class_events CHECK constraint to include 'general'
-        # Since SQLite doesn't support ALTER TABLE for CHECK constraints, we need to recreate the table
-        try:
-            # Check if table exists and has old constraint
-            events_exists = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='class_events'").fetchone()
-            if events_exists:
-                # Get existing data
-                old_events = conn.execute("SELECT * FROM class_events").fetchall()
-                # Drop old table
-                conn.execute("DROP TABLE class_events")
-                conn.commit()
-                # Recreate with correct schema
-                conn.execute("""
-                    CREATE TABLE class_events (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        title TEXT NOT NULL,
-                        description TEXT,
-                        event_date TEXT NOT NULL,
-                        event_time TEXT,
-                        location TEXT,
-                        event_type TEXT NOT NULL DEFAULT 'general' CHECK(event_type IN ('general','exam','holiday','activity','meeting','other')),
-                        created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-                        created_at TEXT NOT NULL,
-                        is_active INTEGER NOT NULL DEFAULT 1
-                    )
-                """)
-                conn.commit()
-                # Restore data if any
-                for event in old_events:
-                    # Ensure event_type is valid, default to 'general' if invalid
-                    event_type = event["event_type"] if event["event_type"] in ('general','exam','holiday','activity','meeting','other') else 'general'
-                    conn.execute(
-                        "INSERT INTO class_events (id, title, description, event_date, event_time, location, event_type, created_by, created_at, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        (event["id"], event["title"], event["description"], event["event_date"], event["event_time"], event["location"], event_type, event["created_by"], event["created_at"], event["is_active"])
-                    )
-                conn.commit()
-        except sqlite3.OperationalError:
-            pass
-
         # Seed a default admin so the app is usable immediately.
         admin_login = os.environ.get("DEFAULT_ADMIN_LOGIN", "ADMIN001")
         admin_password = os.environ.get("DEFAULT_ADMIN_PASSWORD", "admin12345")
@@ -666,27 +461,6 @@ def create_app() -> Flask:
                     "",
                     "security",
                     generate_password_hash(security_password),
-                    datetime.utcnow().isoformat(),
-                ),
-            )
-
-        # Seed a default faculty user for mentor system.
-        faculty_login = os.environ.get("DEFAULT_FACULTY_LOGIN", "FACULTY001")
-        faculty_password = os.environ.get("DEFAULT_FACULTY_PASSWORD", "faculty12345")
-        fexists = conn.execute("SELECT 1 FROM users WHERE login_id = ?", (faculty_login,)).fetchone()
-        if not fexists:
-            conn.execute(
-                """
-                INSERT INTO users (login_id, full_name, email, phone, role, password_hash, parent_user_id, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, NULL, ?)
-                """,
-                (
-                    faculty_login,
-                    "Faculty Mentor",
-                    "faculty@university.local",
-                    "",
-                    "faculty",
-                    generate_password_hash(faculty_password),
                     datetime.utcnow().isoformat(),
                 ),
             )
@@ -794,75 +568,6 @@ def create_app() -> Flask:
 
     def get_user_by_id(user_id: int) -> Optional[sqlite3.Row]:
         return db().execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
-
-    def generate_otp() -> str:
-        """Generate a 6-digit OTP."""
-        return str(random.randint(100000, 999999))
-
-    def send_sms_otp(phone_number: str, otp: str) -> bool:
-        """Send OTP via SMS using Twilio."""
-        try:
-            from twilio.rest import Client
-            
-            # Get Twilio credentials from environment variables
-            account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
-            auth_token = os.environ.get("TWILIO_AUTH_TOKEN")
-            twilio_phone = os.environ.get("TWILIO_PHONE_NUMBER")
-            
-            if not all([account_sid, auth_token, twilio_phone]):
-                print("Twilio credentials not configured. SMS not sent.")
-                return False
-            
-            client = Client(account_sid, auth_token)
-            
-            message = client.messages.create(
-                body=f"Your {university_name} login OTP is: {otp}. Valid for 5 minutes. Do not share this with anyone.",
-                from_=twilio_phone,
-                to=phone_number
-            )
-            
-            print(f"SMS sent to {phone_number}: {message.sid}")
-            return True
-        except Exception as e:
-            print(f"Error sending SMS: {e}")
-            return False
-
-    def store_login_otp(user_id: int, otp: str) -> None:
-        """Store OTP in database with expiration."""
-        expires_at = (datetime.utcnow() + timedelta(minutes=5)).isoformat()
-        db().execute(
-            "INSERT INTO login_otps (user_id, otp, expires_at, created_at) VALUES (?, ?, ?, ?)",
-            (user_id, otp, expires_at, now_iso())
-        )
-        db().commit()
-
-    def verify_login_otp(user_id: int, otp: str) -> bool:
-        """Verify OTP and delete if valid."""
-        row = db().execute(
-            "SELECT * FROM login_otps WHERE user_id = ? AND otp = ? AND expires_at > ?",
-            (user_id, otp, now_iso())
-        ).fetchone()
-        
-        if row:
-            # Delete used OTP
-            db().execute("DELETE FROM login_otps WHERE id = ?", (row["id"],))
-            db().commit()
-            return True
-        return False
-
-    def assign_mentor_to_student() -> Optional[int]:
-        """Assign a mentor to a new student based on load balancing (15 students per mentor)."""
-        # Find faculty users who can be mentors
-        mentors = db().execute(
-            "SELECT id, (SELECT COUNT(*) FROM users WHERE mentor_id = users.id) as student_count FROM users WHERE role = 'faculty' ORDER BY student_count ASC"
-        ).fetchall()
-        
-        if not mentors:
-            return None
-        
-        # Assign to mentor with fewest students
-        mentor = mentors[0]
-        return int(mentor["id"])
 
     def require_login() -> Optional[Response]:
         if not g.current_user:
@@ -1004,14 +709,8 @@ def create_app() -> Flask:
         return render_template("home.html")
 
     @app.route("/login", methods=["GET", "POST"])
-    @rate_limit_decorator
     def login() -> Response | str:
-        if request.method == "GET":
-            return render_template("login.html")
-
-        stage = request.form.get("stage", "credentials")
-        
-        if stage == "credentials":
+        if request.method == "POST":
             login_id = request.form.get("login_id", "").strip()
             password = request.form.get("password", "")
             user = get_user_by_login(login_id)
@@ -1019,149 +718,12 @@ def create_app() -> Flask:
                 flash("Invalid credentials.", "danger")
                 return render_template("login.html")
 
-            # Check if user has phone number for SMS
-            phone = (user["phone"] or "").strip()
-            if not phone:
-                flash("Phone number not registered. Please update your profile or contact administrator.", "danger")
-                return render_template("login.html")
+            session.clear()
+            session["user_id"] = int(user["id"])
+            flash(f"Welcome, {user['full_name']}!", "success")
+            return redirect(url_for("dashboard"))
 
-            # Generate and send OTP
-            otp = generate_otp()
-            store_login_otp(int(user["id"]), otp)
-            
-            # Send SMS OTP
-            sms_sent = send_sms_otp(phone, otp)
-            if sms_sent:
-                flash(f"OTP sent to your registered phone number.", "info")
-            else:
-                # Demo mode: show OTP in flash if SMS not configured
-                flash(f"SMS not configured. Demo OTP: {otp}", "info")
-            
-            # Store login attempt in session
-            session["pending_login_id"] = int(user["id"])
-            session["pending_login_name"] = user["full_name"]
-            return render_template("login.html", login_stage="otp_verify", login_id=login_id)
-        
-        elif stage == "otp_verify":
-            user_id = session.get("pending_login_id")
-            otp_input = request.form.get("otp", "").strip()
-            
-            if not user_id:
-                flash("Session expired. Please login again.", "warning")
-                return render_template("login.html")
-            
-            if verify_login_otp(user_id, otp_input):
-                session.clear()
-                session["user_id"] = user_id
-                session.permanent = True
-                full_name = session.pop("pending_login_name", "User")
-                flash(f"Welcome, {full_name}!", "success")
-                return redirect(url_for("dashboard"))
-            else:
-                flash("Invalid or expired OTP.", "danger")
-                return render_template("login.html", login_stage="otp_verify")
-        
         return render_template("login.html")
-
-    @app.route("/security-login", methods=["GET", "POST"])
-    @rate_limit_decorator
-    def security_login() -> Response | str:
-        """Separate login for security personnel - bypasses OTP for quick access."""
-        if request.method == "GET":
-            return render_template("security_login.html")
-
-        login_id = request.form.get("login_id", "").strip()
-        password = request.form.get("password", "")
-        user = get_user_by_login(login_id)
-        
-        if not user or not check_password_hash(user["password_hash"], password):
-            flash("Invalid credentials.", "danger")
-            return render_template("security_login.html")
-        
-        if user["role"] != "security":
-            flash("Access denied. This login is for security personnel only.", "danger")
-            return render_template("security_login.html")
-
-        session.clear()
-        session["user_id"] = int(user["id"])
-        session.permanent = True
-        flash(f"Welcome, {user['full_name']}!", "success")
-        return redirect(url_for("security_scan"))
-
-    @app.route("/faculty-login", methods=["GET", "POST"])
-    @rate_limit_decorator
-    def faculty_login() -> Response | str:
-        """Separate login for faculty/mentors - bypasses OTP for quick access."""
-        if request.method == "GET":
-            return render_template("faculty_login.html")
-
-        login_id = request.form.get("login_id", "").strip()
-        password = request.form.get("password", "")
-        user = get_user_by_login(login_id)
-        
-        if not user or not check_password_hash(user["password_hash"], password):
-            flash("Invalid credentials.", "danger")
-            return render_template("faculty_login.html")
-        
-        if user["role"] not in ("faculty", "admin"):
-            flash("Access denied. This login is for faculty/admin only.", "danger")
-            return render_template("faculty_login.html")
-
-        session.clear()
-        session["user_id"] = int(user["id"])
-        session.permanent = True
-        flash(f"Welcome, {user['full_name']}!", "success")
-        return redirect(url_for("dashboard"))
-
-    @app.route("/parent-login", methods=["GET", "POST"])
-    @rate_limit_decorator
-    def parent_login() -> Response | str:
-        """Separate login for parents - bypasses OTP for quick access."""
-        if request.method == "GET":
-            return render_template("parent_login.html")
-
-        login_id = request.form.get("login_id", "").strip()
-        password = request.form.get("password", "")
-        user = get_user_by_login(login_id)
-        
-        if not user or not check_password_hash(user["password_hash"], password):
-            flash("Invalid credentials.", "danger")
-            return render_template("parent_login.html")
-        
-        if user["role"] != "parent":
-            flash("Access denied. This login is for parents only.", "danger")
-            return render_template("parent_login.html")
-
-        session.clear()
-        session["user_id"] = int(user["id"])
-        session.permanent = True
-        flash(f"Welcome, {user['full_name']}!", "success")
-        return redirect(url_for("dashboard"))
-
-    @app.route("/admin-login", methods=["GET", "POST"])
-    @rate_limit_decorator
-    def admin_login() -> Response | str:
-        """Separate login for administrators - bypasses OTP for quick access."""
-        if request.method == "GET":
-            return render_template("admin_login.html")
-
-        login_id = request.form.get("login_id", "").strip()
-        password = request.form.get("password", "")
-        user = get_user_by_login(login_id)
-        
-        if not user or not check_password_hash(user["password_hash"], password):
-            flash("Invalid credentials.", "danger")
-            return render_template("admin_login.html")
-        
-        if user["role"] != "admin":
-            flash("Access denied. This login is for administrators only.", "danger")
-            return render_template("admin_login.html")
-
-        session.clear()
-        session["user_id"] = int(user["id"])
-        session.permanent = True
-        flash(f"Welcome, {user['full_name']}!", "success")
-        return redirect(url_for("dashboard"))
 
     def _session_fp_key(login_id: str, phone: str) -> str:
         return f"fp:{login_id}:{phone}"
@@ -1487,13 +1049,10 @@ def create_app() -> Flask:
                     )
 
             try:
-                # Assign mentor to student
-                mentor_id = assign_mentor_to_student()
-                
                 cur = db().execute(
                     """
-                    INSERT INTO users (login_id, full_name, email, phone, role, password_hash, parent_user_id, mentor_id, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO users (login_id, full_name, email, phone, role, password_hash, parent_user_id, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         login_id,
@@ -1503,17 +1062,11 @@ def create_app() -> Flask:
                         role,
                         generate_password_hash(password),
                         parent_user_id,
-                        mentor_id,
                         now_iso(),
                     ),
                 )
                 db().commit()
                 create_audit(None, "user_registered", "user", int(cur.lastrowid), f"role={role}")
-                
-                if mentor_id:
-                    mentor = get_user_by_id(mentor_id)
-                    mentor_name = mentor["full_name"] if mentor else "Unknown"
-                    flash(f"Assigned mentor: {mentor_name}", "info")
             except sqlite3.IntegrityError:
                 flash("This Roll Number is already registered.", "danger")
                 return render_template("register.html", reg_stage="otp_send", prefills=prefills)
@@ -1560,40 +1113,8 @@ def create_app() -> Flask:
             return render_template("security_scan.html")
 
         token = request.form.get("qr_token", "").strip()
-        qr_image = request.files.get("qr_image")
-        
-        # If image is uploaded, decode QR from it
-        if qr_image and qr_image.filename:
-            try:
-                import cv2
-                from pyzbar.pyzbar import decode
-                from PIL import Image
-                import numpy as np
-                
-                # Read image file
-                image_bytes = qr_image.read()
-                image = Image.open(io.BytesIO(image_bytes))
-                
-                # Convert to OpenCV format
-                image_np = np.array(image)
-                image_cv2 = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
-                
-                # Decode QR code
-                decoded_objects = decode(image_cv2)
-                if decoded_objects:
-                    token = decoded_objects[0].data.decode('utf-8')
-                else:
-                    flash("No QR code found in the uploaded image.", "warning")
-                    return render_template("security_scan.html")
-            except ImportError:
-                flash("QR image decoding not available. Please install opencv-python and pyzbar.", "danger")
-                return render_template("security_scan.html")
-            except Exception as e:
-                flash(f"Error decoding QR image: {str(e)}", "danger")
-                return render_template("security_scan.html")
-        
         if not token:
-            flash("Please provide a QR token or upload a QR image.", "warning")
+            flash("Please provide a QR token.", "warning")
             return render_template("security_scan.html")
 
         payload = verify_qr_token(token)
@@ -1657,54 +1178,13 @@ def create_app() -> Flask:
             )
             db().commit()
             create_audit(g.current_user.id, "qr_validated", "permission", request_id, "security_scan")
-            
-            # Send notifications to student, parent, and faculty
-            student = get_user_by_id(int(pr["student_id"]))
-            if student:
-                student_name = student["full_name"]
-                destination = pr["destination"]
-                perm_type = pr["permission_type"].replace('_', ' ')
-                
-                # Notify student
-                create_notification(
-                    int(student["id"]),
-                    "Permission QR Scanned",
-                    f"Your {perm_type} to {destination} has been scanned and validated by security at {now_iso()[:16]}."
-                )
-                
-                # Notify parent
-                if student["parent_user_id"]:
-                    create_notification(
-                        int(student["parent_user_id"]),
-                        "Ward's Permission QR Scanned",
-                        f"{student_name}'s {perm_type} to {destination} has been scanned and validated by security at {now_iso()[:16]}."
-                    )
-                
-                # Notify student's mentor and admin
-                if student["mentor_id"]:
-                    mentor = get_user_by_id(int(student["mentor_id"]))
-                    if mentor:
-                        create_notification(
-                            int(mentor["id"]),
-                            "Student Permission QR Scanned",
-                            f"{student_name}'s {perm_type} to {destination} has been scanned and validated by security at {now_iso()[:16]}."
-                        )
-                
-                # Also notify admin
-                admin_users = db().execute("SELECT id FROM users WHERE role = 'admin'").fetchall()
-                for admin in admin_users:
-                    create_notification(
-                        int(admin["id"]),
-                        "Student Permission QR Scanned",
-                        f"{student_name}'s {perm_type} to {destination} has been scanned and validated by security at {now_iso()[:16]}."
-                    )
 
         db().execute(
             "INSERT INTO qr_scan_logs (request_id, actor_id, result, details, raw_token, scanned_at) VALUES (?, ?, ?, ?, ?, ?)",
             (request_id, g.current_user.id, "valid", "validated", token[:300], now_iso()),
         )
         db().commit()
-        flash("Valid QR. Entry/exit validated and recorded. Notifications sent.", "success")
+        flash("Valid QR. Entry/exit validated and recorded.", "success")
         return render_template("security_scan.html", pr=dict(pr), token=token)
 
     def _filters_from_args(prefix: str) -> dict[str, str]:
@@ -1824,27 +1304,6 @@ def create_app() -> Flask:
                 d["created_at"] = row_to_dt(d["created_at"])
                 game_bookings.append(type("GameBooking", (), d))
 
-        # Fetch class widget data
-        recent_announcements = db().execute(
-            "SELECT * FROM announcements WHERE is_active = 1 ORDER BY created_at DESC LIMIT 5"
-        ).fetchall()
-        
-        upcoming_assignments = db().execute(
-            "SELECT * FROM assignments WHERE is_active = 1 AND due_date >= date('now') ORDER BY due_date ASC LIMIT 5"
-        ).fetchall()
-        
-        # Get today's day of week
-        today_days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-        today_day = today_days[datetime.utcnow().weekday()]
-        todays_schedule = db().execute(
-            "SELECT * FROM class_schedules WHERE is_active = 1 AND day_of_week = ? ORDER BY start_time",
-            (today_day,)
-        ).fetchall()
-        
-        upcoming_events = db().execute(
-            "SELECT * FROM class_events WHERE is_active = 1 AND event_date >= date('now') ORDER BY event_date ASC LIMIT 5"
-        ).fetchall()
-
         return render_template(
             "dashboard_student.html",
             permissions=permissions,
@@ -1852,10 +1311,6 @@ def create_app() -> Flask:
             filters=filters,
             game_bookings=game_bookings,
             is_hosteller=g.current_user.role == "student",
-            recent_announcements=[dict(a) for a in recent_announcements],
-            upcoming_assignments=[dict(a) for a in upcoming_assignments],
-            todays_schedule=[dict(s) for s in todays_schedule],
-            upcoming_events=[dict(e) for e in upcoming_events],
         )
 
     def _dashboard_admin() -> str:
@@ -2799,256 +2254,6 @@ def create_app() -> Flask:
         bookings = [type("Booking", (), dict(r)) for r in bookings_rows]
 
         return render_template("admin_games.html", games=games, slots=slots, bookings=bookings)
-
-    # Announcements Routes
-    @app.route("/announcements", methods=["GET", "POST"])
-    def announcements() -> Response | str:
-        gate = require_login()
-        if gate:
-            return gate
-
-        if request.method == "POST" and g.current_user.role == "admin":
-            action = request.form.get("action", "")
-            if action == "add":
-                title = request.form.get("title", "").strip()
-                content = request.form.get("content", "").strip()
-                category = request.form.get("category", "general").strip()
-                priority = request.form.get("priority", "normal").strip()
-                if not title or not content:
-                    flash("Title and content are required.", "warning")
-                    return redirect(url_for("announcements"))
-                cur = db().execute(
-                    """
-                    INSERT INTO announcements (title, content, category, priority, created_by, created_at, is_active)
-                    VALUES (?, ?, ?, ?, ?, ?, 1)
-                    """,
-                    (title, content, category, priority, g.current_user.id, now_iso()),
-                )
-                db().commit()
-                create_audit(g.current_user.id, "announcement_created", "announcement", int(cur.lastrowid), title)
-                flash("Announcement posted.", "success")
-                return redirect(url_for("announcements"))
-            elif action == "delete":
-                ann_id = int(request.form.get("announcement_id", "0") or 0)
-                db().execute("UPDATE announcements SET is_active = 0 WHERE id = ?", (ann_id,))
-                db().commit()
-                create_audit(g.current_user.id, "announcement_deleted", "announcement", ann_id, "")
-                flash("Announcement removed.", "info")
-                return redirect(url_for("announcements"))
-
-        announcements_list = db().execute(
-            "SELECT a.*, u.full_name AS created_by_name FROM announcements a LEFT JOIN users u ON u.id = a.created_by WHERE a.is_active = 1 ORDER BY a.created_at DESC LIMIT 50"
-        ).fetchall()
-        return render_template("announcements.html", announcements=[dict(a) for a in announcements_list])
-
-    # Class Schedule Routes
-    @app.route("/schedule", methods=["GET", "POST"])
-    def class_schedule() -> Response | str:
-        gate = require_login()
-        if gate:
-            return gate
-
-        if request.method == "POST" and g.current_user.role == "admin":
-            action = request.form.get("action", "")
-            if action == "add":
-                day_of_week = request.form.get("day_of_week", "").strip()
-                subject = request.form.get("subject", "").strip()
-                teacher = request.form.get("teacher", "").strip()
-                room = request.form.get("room", "").strip()
-                start_time = request.form.get("start_time", "").strip()
-                end_time = request.form.get("end_time", "").strip()
-                class_name = request.form.get("class_name", "Class A").strip()
-                if not all([day_of_week, subject, teacher, room, start_time, end_time]):
-                    flash("All fields are required.", "warning")
-                    return redirect(url_for("class_schedule"))
-                cur = db().execute(
-                    """
-                    INSERT INTO class_schedules (day_of_week, subject, teacher, room, start_time, end_time, class_name, is_active, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
-                    """,
-                    (day_of_week, subject, teacher, room, start_time, end_time, class_name, now_iso()),
-                )
-                db().commit()
-                create_audit(g.current_user.id, "schedule_added", "class_schedule", int(cur.lastrowid), subject)
-                flash("Schedule added.", "success")
-                return redirect(url_for("class_schedule"))
-            elif action == "delete":
-                sched_id = int(request.form.get("schedule_id", "0") or 0)
-                db().execute("UPDATE class_schedules SET is_active = 0 WHERE id = ?", (sched_id,))
-                db().commit()
-                create_audit(g.current_user.id, "schedule_deleted", "class_schedule", sched_id, "")
-                flash("Schedule removed.", "info")
-                return redirect(url_for("class_schedule"))
-
-        schedules = db().execute(
-            "SELECT * FROM class_schedules WHERE is_active = 1 ORDER BY day_of_week, start_time"
-        ).fetchall()
-        days_order = {"Monday": 1, "Tuesday": 2, "Wednesday": 3, "Thursday": 4, "Friday": 5, "Saturday": 6, "Sunday": 7}
-        schedules_sorted = sorted(schedules, key=lambda x: (days_order.get(x["day_of_week"], 99), x["start_time"]))
-        return render_template("class_schedule.html", schedules=[dict(s) for s in schedules_sorted])
-
-    # Assignments Routes
-    @app.route("/assignments", methods=["GET", "POST"])
-    def assignments() -> Response | str:
-        gate = require_login()
-        if gate:
-            return gate
-
-        if request.method == "POST" and g.current_user.role == "faculty":
-            action = request.form.get("action", "")
-            if action == "add":
-                title = request.form.get("title", "").strip()
-                description = request.form.get("description", "").strip()
-                subject = request.form.get("subject", "").strip()
-                due_date = request.form.get("due_date", "").strip()
-                total_marks = int(request.form.get("total_marks", "100") or 100)
-                if not all([title, description, subject, due_date]):
-                    flash("All required fields must be filled.", "warning")
-                    return redirect(url_for("assignments"))
-                cur = db().execute(
-                    """
-                    INSERT INTO assignments (title, description, subject, due_date, total_marks, created_by, created_at, is_active)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 1)
-                    """,
-                    (title, description, subject, due_date, total_marks, g.current_user.id, now_iso()),
-                )
-                db().commit()
-                create_audit(g.current_user.id, "assignment_created", "assignment", int(cur.lastrowid), title)
-                flash("Assignment created.", "success")
-                return redirect(url_for("assignments"))
-            elif action == "delete":
-                assign_id = int(request.form.get("assignment_id", "0") or 0)
-                db().execute("UPDATE assignments SET is_active = 0 WHERE id = ?", (assign_id,))
-                db().commit()
-                create_audit(g.current_user.id, "assignment_deleted", "assignment", assign_id, "")
-                flash("Assignment removed.", "info")
-                return redirect(url_for("assignments"))
-
-        assignments_list = db().execute(
-            "SELECT a.*, u.full_name AS created_by_name FROM assignments a LEFT JOIN users u ON u.id = a.created_by WHERE a.is_active = 1 ORDER BY a.due_date ASC"
-        ).fetchall()
-        
-        # Get submissions for current student
-        submissions = {}
-        if g.current_user.role in {"student", "day_scholar"}:
-            sub_rows = db().execute(
-                "SELECT * FROM assignment_submissions WHERE student_id = ?", (g.current_user.id,)
-            ).fetchall()
-            submissions = {s["assignment_id"]: dict(s) for s in sub_rows}
-
-        return render_template("assignments.html", assignments=[dict(a) for a in assignments_list], submissions=submissions)
-
-    @app.route("/assignments/<int:assignment_id>/submit", methods=["POST"])
-    def submit_assignment(assignment_id: int) -> Response:
-        gate = require_roles({"student", "day_scholar"})
-        if gate:
-            return gate
-
-        submission_text = request.form.get("submission_text", "").strip()
-        assignment = db().execute("SELECT * FROM assignments WHERE id = ? AND is_active = 1", (assignment_id,)).fetchone()
-        if not assignment:
-            flash("Assignment not found.", "danger")
-            return redirect(url_for("assignments"))
-
-        try:
-            cur = db().execute(
-                """
-                INSERT INTO assignment_submissions (assignment_id, student_id, submission_text, submitted_at)
-                VALUES (?, ?, ?, ?)
-                """,
-                (assignment_id, g.current_user.id, submission_text, now_iso()),
-            )
-            db().commit()
-            create_audit(g.current_user.id, "assignment_submitted", "assignment_submission", int(cur.lastrowid), "")
-            flash("Assignment submitted successfully.", "success")
-        except sqlite3.IntegrityError:
-            flash("You have already submitted this assignment.", "warning")
-        return redirect(url_for("assignments"))
-
-    # Resources Routes
-    @app.route("/resources", methods=["GET", "POST"])
-    def resources() -> Response | str:
-        gate = require_login()
-        if gate:
-            return gate
-
-        if request.method == "POST" and g.current_user.role in {"student", "day_scholar"}:
-            action = request.form.get("action", "")
-            if action == "add":
-                title = request.form.get("title", "").strip()
-                description = request.form.get("description", "").strip()
-                resource_type = request.form.get("resource_type", "document").strip()
-                subject = request.form.get("subject", "").strip()
-                link_url = request.form.get("link_url", "").strip()
-                if not title or not subject:
-                    flash("Title and subject are required.", "warning")
-                    return redirect(url_for("resources"))
-                cur = db().execute(
-                    """
-                    INSERT INTO class_resources (title, description, resource_type, subject, file_path, file_name, uploaded_by, created_at, is_active)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
-                    """,
-                    (title, description, resource_type, subject, link_url if resource_type == "link" else None, link_url if resource_type == "link" else None, g.current_user.id, now_iso()),
-                )
-                db().commit()
-                create_audit(g.current_user.id, "resource_added", "class_resource", int(cur.lastrowid), title)
-                flash("Resource added.", "success")
-                return redirect(url_for("resources"))
-            elif action == "delete":
-                res_id = int(request.form.get("resource_id", "0") or 0)
-                db().execute("UPDATE class_resources SET is_active = 0 WHERE id = ?", (res_id,))
-                db().commit()
-                create_audit(g.current_user.id, "resource_deleted", "class_resource", res_id, "")
-                flash("Resource removed.", "info")
-                return redirect(url_for("resources"))
-
-        resources_list = db().execute(
-            "SELECT r.*, u.full_name AS uploaded_by_name FROM class_resources r LEFT JOIN users u ON u.id = r.uploaded_by WHERE r.is_active = 1 ORDER BY r.created_at DESC"
-        ).fetchall()
-        return render_template("resources.html", resources=[dict(r) for r in resources_list])
-
-    # Events Routes
-    @app.route("/events", methods=["GET", "POST"])
-    def events() -> Response | str:
-        gate = require_login()
-        if gate:
-            return gate
-
-        if request.method == "POST" and g.current_user.role == "admin":
-            action = request.form.get("action", "")
-            if action == "add":
-                title = request.form.get("title", "").strip()
-                description = request.form.get("description", "").strip()
-                event_date = request.form.get("event_date", "").strip()
-                event_time = request.form.get("event_time", "").strip()
-                location = request.form.get("location", "").strip()
-                event_type = request.form.get("event_type", "general").strip()
-                if not title or not event_date:
-                    flash("Title and date are required.", "warning")
-                    return redirect(url_for("events"))
-                cur = db().execute(
-                    """
-                    INSERT INTO class_events (title, description, event_date, event_time, location, event_type, created_by, created_at, is_active)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
-                    """,
-                    (title, description, event_date, event_time, location, event_type, g.current_user.id, now_iso()),
-                )
-                db().commit()
-                create_audit(g.current_user.id, "event_created", "class_event", int(cur.lastrowid), title)
-                flash("Event added.", "success")
-                return redirect(url_for("events"))
-            elif action == "delete":
-                event_id = int(request.form.get("event_id", "0") or 0)
-                db().execute("UPDATE class_events SET is_active = 0 WHERE id = ?", (event_id,))
-                db().commit()
-                create_audit(g.current_user.id, "event_deleted", "class_event", event_id, "")
-                flash("Event removed.", "info")
-                return redirect(url_for("events"))
-
-        events_list = db().execute(
-            "SELECT e.*, u.full_name AS created_by_name FROM class_events e LEFT JOIN users u ON u.id = e.created_by WHERE e.is_active = 1 AND e.event_date >= date('now') ORDER BY e.event_date ASC"
-        ).fetchall()
-        return render_template("events.html", events=[dict(e) for e in events_list])
 
     return app
 

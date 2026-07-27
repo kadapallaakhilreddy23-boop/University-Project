@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Parent Login | {{ university_name }}{% endblock %}
+{% block content %}
+<section class="panel panel-elevated auth-panel" style="border-color: var(--ku-green);">
+    <h2>👨‍👩‍👧 Parent Login</h2>
+    <p>Access to monitor your ward's activities and permissions.</p>
+    <form method="post">
+        <label for="login_id">Parent ID</label>
+        <input id="login_id" name="login_id" type="text" placeholder="PARENT_STUDENT001" required autofocus>
+
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" required>
+
+        <button class="btn" type="submit">Sign In</button>
+    </form>
+    <p class="muted" style="margin-top: 16px;">
+        <small>This login is restricted to parents/guardians only.</small>
+    </p>
+</section>
+
+<style>
+.auth-panel {
+    max-width: 400px;
+    margin: 40px auto;
+}
+</style>
+{% endblock %}

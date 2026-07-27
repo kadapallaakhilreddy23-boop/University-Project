@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Security Login | {{ university_name }}{% endblock %}
+{% block content %}
+<section class="panel panel-elevated auth-panel" style="border-color: var(--ku-red-bright);">
+    <h2>🔐 Security Personnel Login</h2>
+    <p>Quick access for security desk personnel to scan QR codes.</p>
+    <form method="post">
+        <label for="login_id">Security ID</label>
+        <input id="login_id" name="login_id" type="text" placeholder="SECURITY001" required autofocus>
+
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" required>
+
+        <button class="btn" type="submit">Sign In</button>
+    </form>
+    <p class="muted" style="margin-top: 16px;">
+        <small>This login is restricted to security personnel only.</small>
+    </p>
+</section>
+
+<style>
+.auth-panel {
+    max-width: 400px;
+    margin: 40px auto;
+}
+</style>
+{% endblock %}

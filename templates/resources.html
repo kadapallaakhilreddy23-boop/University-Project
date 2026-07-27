@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+{% block title %}Class Resources | {{ university_name }}{% endblock %}
+{% block content %}
+<section class="panel">
+    <h2>📚 Class Resources</h2>
+    <p>Access study materials, notes, videos, and helpful links shared by teachers.</p>
+
+    {% if g.current_user and g.current_user.role in ['student', 'day_scholar'] %}
+    <div class="panel" style="margin-top: 20px; background: linear-gradient(180deg, #f5f3ff, #fff);">
+        <h3>Share New Resource</h3>
+        <form method="post">
+            <input type="hidden" name="action" value="add">
+            <div class="grid-2">
+                <div>
+                    <label for="title">Title</label>
+                    <input id="title" name="title" type="text" required placeholder="Resource title">
+                </div>
+                <div>
+                    <label for="subject">Subject</label>
+                    <input id="subject" name="subject" type="text" required placeholder="Subject name">
+                </div>
+            </div>
+            <div class="grid-2">
+                <div>
+                    <label for="resource_type">Type</label>
+                    <select id="resource_type" name="resource_type">
+                        <option value="document">Document</option>
+                        <option value="video">Video</option>
+                        <option value="link">Link</option>
+                        <option value="other">Other</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="link_url">Link URL</label>
+                    <input id="link_url" name="link_url" type="url" placeholder="https://...">
+                </div>
+            </div>
+            <div>
+                <label for="description">Description</label>
+                <textarea id="description" name="description" rows="3" placeholder="Brief description..."></textarea>
+            </div>
+            <button class="btn" type="submit">Share Resource</button>
+        </form>
+    </div>
+    {% endif %}
+</section>
+
+<section class="panel">
+    <h3>All Resources</h3>
+    {% if resources %}
+    <div class="resources-grid">
+        {% for res in resources %}
+        <div class="resource-card">
+            <div class="resource-icon">
+                {% if res.resource_type == 'video' %}🎥
+                {% elif res.resource_type == 'link' %}🔗
+                {% elif res.resource_type == 'document' %}📄
+                {% else %}📁{% endif %}
+            </div>
+            <div class="resource-content">
+                <h4>{{ res.title }}</h4>
+                <span class="resource-subject">{{ res.subject }}</span>
+                <p class="resource-description">{{ res.description or 'No description' }}</p>
+                {% if res.file_path %}
+                <a class="resource-link" href="{{ res.file_path }}" target="_blank">Open Resource →</a>
+                {% endif %}
+            </div>
+            <div class="resource-meta">
+                <span class="resource-type">{{ res.resource_type|title }}</span>
+                <span class="resource-date">{{ res.created_at[:10] }}</span>
+                {% if res.uploaded_by_name %}
+                <span class="resource-author">{{ res.uploaded_by_name }}</span>
+                {% endif %}
+            </div>
+            {% if g.current_user and g.current_user.role in ['student', 'day_scholar'] %}
+            <form method="post" style="margin-top: 10px;">
+                <input type="hidden" name="action" value="delete">
+                <input type="hidden" name="resource_id" value="{{ res.id }}">
+                <button class="btn btn-danger" type="submit" style="padding: 4px 10px; font-size: 0.75rem;">Delete</button>
+            </form>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p class="muted">No resources shared yet.</p>
+    {% endif %}
+</section>
+
+<style>
+.resources-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 16px;
+    margin-top: 16px;
+}
+
+.resource-card {
+    background: var(--bg-card-alt);
+    border-radius: var(--radius);
+    padding: 18px;
+    border: 2px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.resource-card:hover {
+    transform: translateY(-4px);
+    box-shadow: var(--shadow);
+    border-color: var(--accent-cyan);
+}
+
+.resource-icon {
+    font-size: 2.5rem;
+    margin-bottom: 10px;
+}
+
+.resource-content h4 {
+    margin: 0 0 6px;
+    color: var(--ku-navy);
+    font-size: 1.1rem;
+}
+
+.resource-subject {
+    display: inline-block;
+    background: var(--accent-gold);
+    color: var(--ku-navy);
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    font-weight: 800;
+    margin-bottom: 8px;
+}
+
+.resource-description {
+    margin: 0 0 10px;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    line-height: 1.5;
+    flex-grow: 1;
+}
+
+.resource-link {
+    color: var(--ku-red-bright);
+    font-weight: 700;
+    text-decoration: none;
+    font-size: 0.9rem;
+}
+
+.resource-link:hover {
+    text-decoration: underline;
+}
+
+.resource-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.resource-type {
+    background: var(--ku-navy-mid);
+    color: #fff;
+    padding: 2px 8px;
+    border-radius: 6px;
+}
+</style>
+{% endblock %}

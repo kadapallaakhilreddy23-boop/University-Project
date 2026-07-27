@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Issue Reporting | {{ university_name }}{% endblock %}
+{% block content %}
+<section class="panel" style="max-width: 760px; margin: 0 auto;">
+    <h2>Report Maintenance / Campus Issue</h2>
+    <form method="post">
+        <div class="grid-2">
+            <div>
+                <label for="category">Issue Category</label>
+                <select id="category" name="category" required>
+                    <option value="maintenance">Maintenance</option>
+                    <option value="hostel">Hostel Facility</option>
+                    <option value="classroom">Classroom / Academic Block</option>
+                    <option value="other">Other</option>
+                </select>
+            </div>
+            <div>
+                <label for="severity">Severity</label>
+                <select id="severity" name="severity" required>
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                </select>
+            </div>
+        </div>
+
+        <label for="location">Location</label>
+        <input id="location" name="location" type="text" required>
+
+        <label for="issue_text">Issue Details</label>
+        <textarea id="issue_text" name="issue_text" rows="5" required></textarea>
+
+        <button class="btn" type="submit">Submit Issue</button>
+    </form>
+</section>
+{% endblock %}

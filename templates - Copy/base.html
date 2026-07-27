@@ -50,16 +50,6 @@
 
                 <a href="{{ url_for('dashboard') }}">Dashboard</a>
 
-                <a href="{{ url_for('announcements') }}">Announcements</a>
-
-                <a href="{{ url_for('class_schedule') }}">Schedule</a>
-
-                <a href="{{ url_for('assignments') }}">Assignments</a>
-
-                <a href="{{ url_for('resources') }}">Resources</a>
-
-                <a href="{{ url_for('events') }}">Events</a>
-
                 <a href="{{ url_for('profile') }}">Profile</a>
 
                 {% if g.current_user.role == 'admin' %}
@@ -99,14 +89,6 @@
             {% else %}
 
                 <a href="{{ url_for('login') }}">Login</a>
-
-                <a href="{{ url_for('faculty_login') }}">Faculty Login</a>
-
-                <a href="{{ url_for('parent_login') }}">Parent Login</a>
-
-                <a href="{{ url_for('admin_login') }}">Admin Login</a>
-
-                <a href="{{ url_for('security_login') }}">Security Login</a>
 
                 <a class="nav-cta" href="{{ url_for('register_student') }}">Register</a>
 

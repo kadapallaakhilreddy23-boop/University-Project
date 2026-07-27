@@ -16,14 +16,9 @@
         </div>
         <div>
             <h3>Manual Token Entry</h3>
-            <form id="qr-form" method="post" enctype="multipart/form-data">
+            <form id="qr-form" method="post">
                 <label for="qr_token">QR Token</label>
-                <textarea id="qr_token" name="qr_token" rows="4" placeholder="Paste scanned token here">{{ token or '' }}</textarea>
-                
-                <label for="qr_image" style="margin-top: 12px;">Or Upload QR Image</label>
-                <input id="qr_image" name="qr_image" type="file" accept="image/*">
-                <p class="muted" style="font-size: 0.8rem;">Upload a QR code image from your gallery</p>
-                
+                <textarea id="qr_token" name="qr_token" rows="4" placeholder="Paste scanned token here" required>{{ token or '' }}</textarea>
                 <button class="btn" type="submit">Validate</button>
             </form>
         </div>

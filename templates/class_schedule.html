@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+{% block title %}Class Schedule | {{ university_name }}{% endblock %}
+{% block content %}
+<section class="panel">
+    <h2>📅 Class Schedule</h2>
+    <p>View your weekly class timetable and stay organized.</p>
+
+    {% if g.current_user and g.current_user.role == 'admin' %}
+    <div class="panel" style="margin-top: 20px; background: linear-gradient(180deg, #f0fdfa, #fff);">
+        <h3>Add New Schedule</h3>
+        <form method="post">
+            <input type="hidden" name="action" value="add">
+            <div class="grid-2">
+                <div>
+                    <label for="day_of_week">Day</label>
+                    <select id="day_of_week" name="day_of_week" required>
+                        <option value="">Select Day</option>
+                        <option value="Monday">Monday</option>
+                        <option value="Tuesday">Tuesday</option>
+                        <option value="Wednesday">Wednesday</option>
+                        <option value="Thursday">Thursday</option>
+                        <option value="Friday">Friday</option>
+                        <option value="Saturday">Saturday</option>
+                        <option value="Sunday">Sunday</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="subject">Subject</label>
+                    <input id="subject" name="subject" type="text" required placeholder="Subject name">
+                </div>
+            </div>
+            <div class="grid-2">
+                <div>
+                    <label for="teacher">Teacher</label>
+                    <input id="teacher" name="teacher" type="text" required placeholder="Teacher name">
+                </div>
+                <div>
+                    <label for="room">Room</label>
+                    <input id="room" name="room" type="text" required placeholder="Room number">
+                </div>
+            </div>
+            <div class="grid-2">
+                <div>
+                    <label for="start_time">Start Time</label>
+                    <input id="start_time" name="start_time" type="time" required>
+                </div>
+                <div>
+                    <label for="end_time">End Time</label>
+                    <input id="end_time" name="end_time" type="time" required>
+                </div>
+            </div>
+            <div>
+                <label for="class_name">Class Name</label>
+                <input id="class_name" name="class_name" type="text" value="Class A" placeholder="Class name">
+            </div>
+            <button class="btn" type="submit">Add Schedule</button>
+        </form>
+    </div>
+    {% endif %}
+</section>
+
+<section class="panel">
+    <h3>Weekly Schedule</h3>
+    {% if schedules %}
+    <div class="schedule-grid">
+        {% for day in ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'] %}
+        {% set day_schedules = schedules | selectattr('day_of_week', 'equalto', day) | list %}
+        {% if day_schedules %}
+        <div class="day-column">
+            <h4 class="day-header">{{ day }}</h4>
+            {% for sched in day_schedules %}
+            <div class="schedule-card">
+                <div class="schedule-time">{{ sched.start_time }} - {{ sched.end_time }}</div>
+                <div class="schedule-subject">{{ sched.subject }}</div>
+                <div class="schedule-details">
+                    <span>👤 {{ sched.teacher }}</span>
+                    <span>📍 {{ sched.room }}</span>
+                </div>
+                {% if g.current_user and g.current_user.role == 'admin' %}
+                <form method="post" style="margin-top: 8px;">
+                    <input type="hidden" name="action" value="delete">
+                    <input type="hidden" name="schedule_id" value="{{ sched.id }}">
+                    <button class="btn btn-danger" type="submit" style="padding: 4px 10px; font-size: 0.75rem;">Remove</button>
+                </form>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+        {% endfor %}
+    </div>
+    {% else %}
+    <p class="muted">No schedule available yet.</p>
+    {% endif %}
+</section>
+
+<style>
+.schedule-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+    margin-top: 16px;
+}
+
+.day-column {
+    background: var(--bg-card-alt);
+    border-radius: var(--radius);
+    padding: 16px;
+    border: 2px solid var(--border);
+}
+
+.day-header {
+    margin: 0 0 12px;
+    color: var(--ku-red-bright);
+    font-size: 1rem;
+    text-align: center;
+    padding-bottom: 8px;
+    border-bottom: 2px solid var(--border);
+}
+
+.schedule-card {
+    background: #fff;
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 10px;
+    border: 1px solid var(--border);
+    transition: transform 0.2s;
+}
+
+.schedule-card:hover {
+    transform: translateY(-2px);
+    border-color: var(--accent-cyan);
+}
+
+.schedule-time {
+    font-weight: 800;
+    color: var(--ku-navy);
+    font-size: 0.9rem;
+    margin-bottom: 4px;
+}
+
+.schedule-subject {
+    font-weight: 700;
+    color: var(--text-dark);
+    font-size: 1rem;
+    margin-bottom: 6px;
+}
+
+.schedule-details {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+</style>
+{% endblock %}
