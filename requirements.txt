@@ -5,3 +5,4 @@ opencv-python>=4.8.0
 pyzbar>=0.1.9
 Pillow>=10.0.0
 twilio>=8.11.0
+gunicorn>=23.0.0
