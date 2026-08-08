@@ -1065,15 +1065,156 @@ th {
         flex-direction: column;
         align-items: flex-start;
         gap: 12px;
+        padding: 12px 16px;
+    }
+
+    .brand-left {
+        width: 100%;
+        justify-content: space-between;
+    }
+
+    .brand-logo {
+        height: 40px;
+        max-width: 140px;
     }
 
     .brand-title-compact {
         display: none;
     }
 
+    .top-nav .nav-links {
+        width: 100%;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+    }
+
+    .top-nav .nav-links a {
+        width: 100%;
+        text-align: center;
+        padding: 12px 16px;
+        font-size: 0.95rem;
+    }
+
+    .top-nav .nav-links a.nav-cta {
+        margin-left: 0;
+        margin-top: 8px;
+    }
+
+    .container {
+        padding: 16px;
+    }
+
+    .main-home {
+        padding: 16px;
+    }
+
+    .hero-campus {
+        min-height: 350px;
+    }
+
+    .hero-campus-content {
+        padding: 24px 20px;
+    }
+
+    .hero-title {
+        font-size: 1.6rem;
+    }
+
+    .hero-kpis {
+        grid-template-columns: 1fr;
+    }
+
+    .feature-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .home-split {
+        grid-template-columns: 1fr;
+    }
+
+    .grid-2 {
+        grid-template-columns: 1fr;
+    }
+
+    .panel {
+        padding: 16px;
+        margin-top: 16px;
+    }
+
+    .btn {
+        width: 100%;
+        padding: 14px 20px;
+    }
+
     .hero-actions .btn {
         width: 100%;
         text-align: center;
+    }
+
+    .auth-panel {
+        padding: 20px;
+    }
+
+    input,
+    select,
+    textarea {
+        padding: 14px 16px;
+        font-size: 16px; /* Prevents zoom on iOS */
+    }
+
+    .footer {
+        flex-direction: column;
+        text-align: center;
+        padding: 20px;
+    }
+
+    .footer-brand {
+        justify-content: center;
+    }
+}
+
+/* Touch-friendly interactions */
+@media (hover: none) and (pointer: coarse) {
+    .btn {
+        min-height: 48px;
+        min-width: 48px;
+        padding: 16px 24px;
+    }
+
+    .top-nav .nav-links a {
+        min-height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    input,
+    select,
+    textarea {
+        min-height: 48px;
+        padding: 16px;
+    }
+
+    .panel {
+        border-radius: 16px;
+    }
+
+    .widget {
+        min-height: 120px;
+    }
+
+    /* Remove hover effects on touch devices */
+    .btn:hover {
+        transform: none;
+    }
+
+    .panel:hover {
+        transform: none;
+    }
+
+    .widget:hover {
+        animation: none;
     }
 }
 
