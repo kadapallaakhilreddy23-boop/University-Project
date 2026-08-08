@@ -51,14 +51,19 @@ body {
     font-family: var(--font);
     font-weight: 600;
     background: var(--bg-page);
-    background-image:
-        radial-gradient(ellipse 80% 50% at 10% -10%, rgba(139, 92, 246, 0.12), transparent),
-        radial-gradient(ellipse 60% 40% at 90% 0%, rgba(6, 182, 212, 0.1), transparent),
-        radial-gradient(ellipse 50% 30% at 50% 100%, rgba(220, 38, 38, 0.06), transparent);
+    background: linear-gradient(-45deg, #f0f4fc, #e0e7ff, #f0fdfa, #fef2f2);
+    background-size: 400% 400%;
+    animation: gradientShift 15s ease infinite;
     color: var(--text-body);
     line-height: 1.55;
     -webkit-font-smoothing: antialiased;
     min-height: 100vh;
+}
+
+@keyframes gradientShift {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
 }
 
 a {
@@ -548,17 +553,26 @@ h1, h2, h3, h4 {
     padding: 24px;
     margin-top: 20px;
     box-shadow: var(--shadow);
-    animation: panelSlideIn 0.5s ease-out;
+    animation: panelSlideIn 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+    transform-style: preserve-3d;
+    perspective: 1000px;
 }
 
 @keyframes panelSlideIn {
-    from { opacity: 0; transform: translateY(20px); }
-    to { opacity: 1; transform: translateY(0); }
+    from { opacity: 0; transform: translateY(30px) rotateX(10deg); }
+    to { opacity: 1; transform: translateY(0) rotateX(0deg); }
+}
+
+.panel:hover {
+    transform: translateY(-5px) rotateX(2deg);
+    box-shadow: 0 20px 40px rgba(15, 39, 68, 0.15);
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 /* Staggered animations for dashboard widgets */
 .widget {
-    animation: widgetFadeIn 0.5s ease-out;
+    animation: widgetFadeIn 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+    transform-style: preserve-3d;
 }
 
 .widget:nth-child(1) { animation-delay: 0.1s; }
@@ -567,18 +581,18 @@ h1, h2, h3, h4 {
 .widget:nth-child(4) { animation-delay: 0.4s; }
 
 @keyframes widgetFadeIn {
-    from { opacity: 0; transform: translateY(15px) scale(0.95); }
-    to { opacity: 1; transform: translateY(0) scale(1); }
+    from { opacity: 0; transform: translateY(20px) scale(0.9) rotateY(-5deg); }
+    to { opacity: 1; transform: translateY(0) scale(1) rotateY(0deg); }
 }
 
 .widget:hover {
-    animation: widgetPulse 0.3s ease-out;
+    animation: widgetFloat 0.6s ease-in-out infinite;
+    box-shadow: 0 15px 35px rgba(15, 39, 68, 0.2);
 }
 
-@keyframes widgetPulse {
-    0% { transform: scale(1); }
-    50% { transform: scale(1.02); }
-    100% { transform: scale(1); }
+@keyframes widgetFloat {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-8px); }
 }
 
 .panel-elevated {
@@ -627,13 +641,14 @@ textarea {
     font-family: inherit;
     font-size: 0.95rem;
     font-weight: 600;
-    transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
-    animation: inputFadeIn 0.3s ease-out;
+    transition: border-color 0.3s, box-shadow 0.3s, transform 0.3s;
+    animation: inputFadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    position: relative;
 }
 
 @keyframes inputFadeIn {
-    from { opacity: 0; transform: translateY(-5px); }
-    to { opacity: 1; transform: translateY(0); }
+    from { opacity: 0; transform: translateY(-10px) scale(0.95); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 input:focus,
@@ -641,8 +656,14 @@ select:focus,
 textarea:focus {
     outline: none;
     border-color: var(--ku-red-bright);
-    box-shadow: 0 0 0 4px var(--ku-red-glow);
-    transform: scale(1.01);
+    box-shadow: 0 0 0 4px var(--ku-red-glow), 0 0 20px rgba(220, 38, 38, 0.2);
+    transform: scale(1.02);
+    animation: inputPulse 0.6s ease-in-out;
+}
+
+@keyframes inputPulse {
+    0%, 100% { box-shadow: 0 0 0 4px var(--ku-red-glow); }
+    50% { box-shadow: 0 0 0 8px rgba(220, 38, 38, 0.3); }
 }
 
 .btn {
@@ -651,6 +672,7 @@ textarea:focus {
     border-radius: 10px;
     padding: 12px 20px;
     background: linear-gradient(135deg, var(--ku-red-bright), #ef4444);
+    background-size: 200% 200%;
     color: #fff;
     font-weight: 800;
     font-size: 0.92rem;
@@ -659,7 +681,9 @@ textarea:focus {
     font-family: inherit;
     transition: transform 0.15s, box-shadow 0.2s, filter 0.2s;
     box-shadow: var(--shadow-color);
-    animation: btnBounce 0.4s ease-out;
+    animation: btnBounce 0.4s ease-out, btnShimmer 3s ease-in-out infinite;
+    position: relative;
+    overflow: hidden;
 }
 
 @keyframes btnBounce {
@@ -668,11 +692,33 @@ textarea:focus {
     100% { transform: scale(1); opacity: 1; }
 }
 
+@keyframes btnShimmer {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+}
+
+.btn::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+    animation: btnGlow 2s ease-in-out infinite;
+}
+
+@keyframes btnGlow {
+    0% { left: -100%; }
+    50%, 100% { left: 100%; }
+}
+
 .btn:hover {
     transform: translateY(-2px) scale(1.02);
     filter: brightness(1.05);
     color: #fff;
-    box-shadow: 0 10px 28px rgba(220, 38, 38, 0.35);
+    box-shadow: 0 10px 28px rgba(220, 38, 38, 0.35), 0 0 20px rgba(220, 38, 38, 0.3);
 }
 
 .btn:active {
@@ -969,13 +1015,23 @@ th {
 .auth-panel {
     max-width: 480px;
     margin: 0 auto;
-    animation: authPanelBounce 0.6s ease-out;
+    animation: authPanelBounce 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+    transform-style: preserve-3d;
 }
 
 @keyframes authPanelBounce {
-    0% { opacity: 0; transform: scale(0.8) translateY(-30px); }
-    50% { transform: scale(1.02) translateY(5px); }
-    100% { opacity: 1; transform: scale(1) translateY(0); }
+    0% { opacity: 0; transform: scale(0.7) translateY(-50px) rotateX(15deg); }
+    50% { transform: scale(1.05) translateY(10px) rotateX(-5deg); }
+    100% { opacity: 1; transform: scale(1) translateY(0) rotateX(0deg); }
+}
+
+.auth-panel:hover {
+    animation: authPanelFloat 3s ease-in-out infinite;
+}
+
+@keyframes authPanelFloat {
+    0%, 100% { transform: translateY(0) rotateX(0deg); }
+    50% { transform: translateY(-10px) rotateX(3deg); }
 }
 
 .masthead {
@@ -1033,4 +1089,159 @@ th {
     body {
         background: #fff;
     }
+}
+
+/* Loading spinner animation */
+.loading-spinner {
+    width: 50px;
+    height: 50px;
+    border: 4px solid var(--border);
+    border-top: 4px solid var(--ku-red-bright);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin: 20px auto;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Pulse ring effect */
+.pulse-ring {
+    position: relative;
+}
+
+.pulse-ring::before,
+.pulse-ring::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    border: 2px solid var(--ku-red-bright);
+    animation: pulseRing 2s ease-out infinite;
+}
+
+.pulse-ring::after {
+    animation-delay: 1s;
+}
+
+@keyframes pulseRing {
+    0% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+    100% { transform: translate(-50%, -50%) scale(1.5); opacity: 0; }
+}
+
+/* Glow effect for important elements */
+.glow-effect {
+    animation: glowPulse 2s ease-in-out infinite;
+}
+
+@keyframes glowPulse {
+    0%, 100% { box-shadow: 0 0 5px var(--ku-red-bright), 0 0 10px var(--ku-red-bright); }
+    50% { box-shadow: 0 0 20px var(--ku-red-bright), 0 0 30px var(--ku-red-bright); }
+}
+
+/* Typewriter effect for text */
+.typewriter {
+    overflow: hidden;
+    border-right: 3px solid var(--ku-red-bright);
+    white-space: nowrap;
+    animation: typing 3s steps(40) 1s forwards, blink 0.75s step-end infinite;
+}
+
+@keyframes typing {
+    from { width: 0; }
+    to { width: 100%; }
+}
+
+@keyframes blink {
+    50% { border-color: transparent; }
+}
+
+/* Morphing background shapes */
+.morph-bg {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: -1;
+    overflow: hidden;
+}
+
+.morph-shape {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(60px);
+    opacity: 0.5;
+    animation: morphMove 20s ease-in-out infinite;
+}
+
+.morph-shape:nth-child(1) {
+    width: 400px;
+    height: 400px;
+    background: var(--accent-purple);
+    top: -100px;
+    left: -100px;
+    animation-delay: 0s;
+}
+
+.morph-shape:nth-child(2) {
+    width: 300px;
+    height: 300px;
+    background: var(--accent-cyan);
+    bottom: -50px;
+    right: -50px;
+    animation-delay: -5s;
+}
+
+.morph-shape:nth-child(3) {
+    width: 350px;
+    height: 350px;
+    background: var(--accent-gold);
+    top: 50%;
+    left: 50%;
+    animation-delay: -10s;
+}
+
+@keyframes morphMove {
+    0%, 100% { transform: translate(0, 0) scale(1); }
+    25% { transform: translate(100px, 50px) scale(1.1); }
+    50% { transform: translate(50px, 100px) scale(0.9); }
+    75% { transform: translate(-50px, 50px) scale(1.05); }
+}
+
+/* Scroll reveal animation */
+.reveal {
+    opacity: 0;
+    transform: translateY(50px);
+    transition: all 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.reveal.active {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+/* Staggered children animation */
+.stagger-children > * {
+    opacity: 0;
+    transform: translateY(20px);
+    transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.stagger-children.active > *:nth-child(1) { transition-delay: 0.1s; }
+.stagger-children.active > *:nth-child(2) { transition-delay: 0.2s; }
+.stagger-children.active > *:nth-child(3) { transition-delay: 0.3s; }
+.stagger-children.active > *:nth-child(4) { transition-delay: 0.4s; }
+.stagger-children.active > *:nth-child(5) { transition-delay: 0.5s; }
+
+.stagger-children.active > * {
+    opacity: 1;
+    transform: translateY(0);
 }
